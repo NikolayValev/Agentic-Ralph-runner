@@ -16,6 +16,7 @@ linear:
   # Only tickets ALSO carrying this label are in scope for this repo.
   repo_label: repo:quitting-smoking-tracker
   todo_state: Todo                 # "unstarted" — what gate.py picks up
+  backlog_state: Backlog           # where /ralph skip parks a ticket
   in_progress_state: In Progress
   review_state: In Review
 

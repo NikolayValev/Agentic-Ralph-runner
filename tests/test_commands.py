@@ -146,3 +146,93 @@ def test_ticket_falls_back_to_block_id():
 
 def test_ticket_missing_is_empty_not_an_error():
     assert ticket_from_payload({"actions": []}) == ""
+
+
+# --- queue listing and prioritization ---------------------------------------
+
+from ralph.commands import (handle_bump, handle_list, handle_skip,
+                            handle_unskip, normalize_ticket)
+from ralph.linear import URGENT, LinearError
+from ralph.slack import ACTION_BUMP, ACTION_SKIP
+
+
+def queue_issue(identifier, *, priority=0):
+    return {
+        "id": f"uuid-{identifier}", "identifier": identifier,
+        "title": f"title for {identifier}", "created_at": "2026-01-01T00:00:00Z",
+        "state_name": "Todo", "state_type": "unstarted",
+        "labels": ["autonomous-eligible", "repo:quitting-smoking-tracker"],
+        "priority": priority,
+    }
+
+
+@pytest.fixture
+def fake_linear(monkeypatch):
+    """Record writes instead of performing them."""
+    calls = {"priority": [], "moves": []}
+    monkeypatch.setattr(
+        commands, "fetch_labelled_issues",
+        lambda *a, **k: [queue_issue("NIK-1"), queue_issue("NIK-2", priority=URGENT)])
+    monkeypatch.setattr(
+        commands, "set_priority",
+        lambda key, ticket, priority, **k: calls["priority"].append((ticket, priority)))
+    monkeypatch.setattr(
+        commands, "move_issue",
+        lambda key, ticket, state, team, **k: (calls["moves"].append((ticket, state)), state)[1])
+    return calls
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("NIK-110", "NIK-110"), ("nik-110", "NIK-110"), ("  NIK-110  ", "NIK-110"),
+    ("", ""), ("garbage", ""), ("NIK-", ""), ("110", ""),
+])
+def test_normalize_ticket(raw, expected):
+    assert normalize_ticket(raw) == expected
+
+
+def test_list_ranks_urgent_first_and_attaches_blocks(isolated, cfg, fake_linear):
+    reply = handle_list(cfg)
+    assert "NIK-2" in reply.text, "the urgent ticket is the next pick"
+    assert reply.blocks, "the list is rendered as blocks, not just text"
+
+
+def test_list_reports_a_linear_outage_without_raising(isolated, cfg, monkeypatch):
+    def boom(*a, **k):
+        raise LinearError("Linear request failed")
+    monkeypatch.setattr(commands, "fetch_labelled_issues", boom)
+    reply = handle_list(cfg)
+    assert "could not read" in reply.text.lower()
+
+
+def test_bump_sets_urgent(isolated, cfg, fake_linear):
+    reply = handle_bump(cfg, "NIK-1")
+    assert fake_linear["priority"] == [("NIK-1", URGENT)]
+    assert reply.ephemeral is False
+
+
+def test_bump_rejects_a_malformed_ticket_without_writing(isolated, cfg, fake_linear):
+    reply = handle_bump(cfg, "not-a-ticket")
+    assert fake_linear["priority"] == []
+    assert "usage" in reply.text.lower()
+
+
+def test_skip_parks_the_ticket_in_backlog(isolated, cfg, fake_linear):
+    handle_skip(cfg, "NIK-1")
+    assert fake_linear["moves"] == [("NIK-1", cfg.linear["backlog_state"])]
+
+
+def test_unskip_returns_it_to_todo(isolated, cfg, fake_linear):
+    handle_unskip(cfg, "NIK-1")
+    assert fake_linear["moves"] == [("NIK-1", cfg.linear["todo_state"])]
+
+
+def test_slash_routes_the_new_commands(isolated, cfg, fake_linear):
+    assert handle_slash("list", cfg).blocks
+    handle_slash("bump NIK-1", cfg)
+    assert fake_linear["priority"] == [("NIK-1", URGENT)]
+
+
+def test_help_documents_the_new_commands(isolated, cfg):
+    text = handle_slash("help", cfg).text
+    for command in ("list", "bump", "skip", "unskip"):
+        assert command in text

@@ -7,20 +7,27 @@ these handlers need neither, so the behaviour can be tested directly.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
 
 from ralph.breaker import read_count, reset as reset_streak
 from ralph.config import STOP_FILE, Config
 from ralph.github import GitHubError, close_pr, delete_branch, find_pr, repo_slug
-from ralph.linear import LinearError, move_issue
+from ralph.linear import (LinearError, URGENT, fetch_labelled_issues, move_issue,
+                          rank_issues, set_priority)
+from ralph.slack import build_queue_blocks, queue_headline
 
 HELP = (
     "*Ralph commands*\n"
-    "`/ralph status` - schedule window, run budget, failure streak, STOP state\n"
-    "`/ralph stop`   - pause the loop (writes STOP; ticks become no-ops)\n"
-    "`/ralph go`     - resume (clears STOP and the failure streak)\n"
-    "`/ralph help`   - this message"
+    "`/ralph status`          - schedule window, run budget, failure streak, STOP state\n"
+    "`/ralph list`            - the queue, in the order Ralph will work it\n"
+    "`/ralph bump NIK-123`    - make a ticket the next pick (sets Urgent in Linear)\n"
+    "`/ralph skip NIK-123`    - park a ticket in Backlog; Ralph ignores it\n"
+    "`/ralph unskip NIK-123`  - return a parked ticket to Todo\n"
+    "`/ralph stop`            - pause the loop (writes STOP; ticks become no-ops)\n"
+    "`/ralph go`              - resume (clears STOP and the failure streak)\n"
+    "`/ralph help`            - this message"
 )
 
 
@@ -28,6 +35,9 @@ HELP = (
 class Reply:
     text: str
     ephemeral: bool = True
+    # Block Kit payload for replies that are richer than a line of text. The
+    # transport falls back to `text` when this is None.
+    blocks: list[dict] | None = None
 
 
 def status_text(cfg: Config, *, now: datetime | None = None) -> str:
@@ -54,11 +64,95 @@ def status_text(cfg: Config, *, now: datetime | None = None) -> str:
     return "\n".join(lines)
 
 
+TICKET_RE = re.compile(r"^[A-Za-z]+-\d+$")
+
+
+def normalize_ticket(raw: str) -> str:
+    """Uppercase a ticket id, or return '' if it is not one.
+
+    Slack helpfully wraps bare text in angle brackets when it thinks it is a
+    link, so those are stripped before matching.
+    """
+    candidate = (raw or "").strip().strip("<>").split("|")[0].strip().upper()
+    return candidate if TICKET_RE.match(candidate) else ""
+
+
+def _api_key() -> str:
+    return os.environ.get("LINEAR_API_KEY", "")
+
+
+def handle_list(cfg: Config) -> Reply:
+    """Show the queue in the order the gate will work it."""
+    try:
+        issues = fetch_labelled_issues(
+            _api_key(), cfg.linear["team_key"], cfg.linear["eligible_label"])
+    except LinearError as exc:
+        return Reply(f":warning: could not read the queue: {exc}")
+
+    ranked, skipped = rank_issues(
+        issues,
+        eligible_label=cfg.linear["eligible_label"],
+        repo_label=cfg.linear.get("repo_label", ""))
+    return Reply(queue_headline(ranked), blocks=build_queue_blocks(ranked, skipped))
+
+
+def handle_bump(cfg: Config, ticket: str) -> Reply:
+    """Make a ticket the next pick by setting it Urgent in Linear."""
+    ticket = normalize_ticket(ticket)
+    if not ticket:
+        return Reply("Usage: `/ralph bump NIK-123`")
+    try:
+        set_priority(_api_key(), ticket, URGENT)
+    except LinearError as exc:
+        return Reply(f":warning: {ticket}: could not bump: {exc}", ephemeral=False)
+    return Reply(
+        f":arrow_up: {ticket} set to Urgent. It goes next unless something else "
+        f"is also Urgent and older.",
+        ephemeral=False)
+
+
+def _move(cfg: Config, ticket: str, state_key: str, default: str,
+          icon: str, verb: str, usage: str) -> Reply:
+    """Shared body for skip and unskip: both are one move_issue call."""
+    ticket = normalize_ticket(ticket)
+    if not ticket:
+        return Reply(usage)
+    state = cfg.linear.get(state_key, default)
+    try:
+        landed = move_issue(_api_key(), ticket, state, cfg.linear["team_key"])
+    except LinearError as exc:
+        return Reply(f":warning: {ticket}: could not {verb}: {exc}", ephemeral=False)
+    return Reply(f"{icon} {ticket} moved to {landed}.", ephemeral=False)
+
+
+def handle_skip(cfg: Config, ticket: str) -> Reply:
+    """Park a ticket: Backlog is not an eligible state, so the gate ignores it."""
+    return _move(cfg, ticket, "backlog_state", "Backlog",
+                 ":double_vertical_bar:", "skip", "Usage: `/ralph skip NIK-123`")
+
+
+def handle_unskip(cfg: Config, ticket: str) -> Reply:
+    """Return a parked ticket to the queue."""
+    return _move(cfg, ticket, "todo_state", "Todo",
+                 ":leftwards_arrow_with_hook:", "unskip",
+                 "Usage: `/ralph unskip NIK-123`")
+
+
 def handle_slash(text: str, cfg: Config) -> Reply:
-    command = (text or "").strip().split()[0].lower() if (text or "").strip() else "status"
+    parts = (text or "").strip().split()
+    command = parts[0].lower() if parts else "status"
+    argument = parts[1] if len(parts) > 1 else ""
 
     if command in ("status", "s"):
         return Reply(status_text(cfg))
+    if command in ("list", "queue", "q"):
+        return handle_list(cfg)
+    if command in ("bump", "next"):
+        return handle_bump(cfg, argument)
+    if command == "skip":
+        return handle_skip(cfg, argument)
+    if command == "unskip":
+        return handle_unskip(cfg, argument)
     if command == "stop":
         STOP_FILE.parent.mkdir(parents=True, exist_ok=True)
         STOP_FILE.write_text(
