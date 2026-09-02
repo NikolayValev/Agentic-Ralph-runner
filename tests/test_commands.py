@@ -216,6 +216,17 @@ def test_list_reports_a_linear_outage_without_raising(isolated, cfg, monkeypatch
     assert "could not read" in reply.text.lower()
 
 
+@pytest.mark.parametrize("exc_cls", [ValueError, KeyError])
+def test_list_reports_a_malformed_node_without_raising(isolated, cfg, monkeypatch, exc_cls):
+    """A malformed Linear node raises ValueError/KeyError, not LinearError --
+    catching only LinearError leaves the listener with no reply at all."""
+    def boom(*a, **k):
+        raise exc_cls("bad node")
+    monkeypatch.setattr(commands, "fetch_labelled_issues", boom)
+    reply = handle_list(cfg)
+    assert "could not read" in reply.text.lower()
+
+
 def test_bump_sets_urgent(isolated, cfg, fake_linear):
     reply = handle_bump(cfg, "NIK-1")
     assert fake_linear["priority"] == [("NIK-1", URGENT)]
@@ -250,6 +261,63 @@ def test_unskip_rejects_a_foreign_team_ticket_without_writing(isolated, cfg, fak
 def test_skip_parks_the_ticket_in_backlog(isolated, cfg, fake_linear):
     handle_skip(cfg, "NIK-1")
     assert fake_linear["moves"] == [("NIK-1", cfg.linear["backlog_state"])]
+
+
+# --- queue-membership check on bump/skip (not unskip) ------------------------
+#
+# fake_linear's fetch stub returns NIK-1 and NIK-2 (Urgent) as the queue.
+# NIK-999 is shaped like a valid ticket but never appears in that queue, the
+# same way a Done, non-existent, or in-flight (In Progress) ticket would not.
+
+def test_bump_refuses_a_ticket_not_in_the_queue(isolated, cfg, fake_linear):
+    reply = handle_bump(cfg, "NIK-999")
+    assert fake_linear["priority"] == [], "no write on a ticket outside the queue"
+    assert "not in the queue" in reply.text.lower()
+    assert "NIK-1" in reply.text and "NIK-2" in reply.text, \
+        "refusal should list the identifiers that ARE queued"
+
+
+def test_skip_refuses_a_ticket_not_in_the_queue(isolated, cfg, fake_linear):
+    reply = handle_skip(cfg, "NIK-999")
+    assert fake_linear["moves"] == [], "no write on a ticket outside the queue"
+    assert "not in the queue" in reply.text.lower()
+
+
+def test_skip_refusal_points_at_stop_for_in_flight_work(isolated, cfg, fake_linear):
+    """The human's actual recourse for a ticket already being worked is
+    `/ralph stop`, not skip -- skip only affects tickets not yet started."""
+    reply = handle_skip(cfg, "NIK-999")
+    assert "/ralph stop" in reply.text
+
+
+def test_bump_still_works_for_a_queued_ticket(isolated, cfg, fake_linear):
+    reply = handle_bump(cfg, "NIK-1")
+    assert fake_linear["priority"] == [("NIK-1", URGENT)]
+    assert "goes next" in reply.text.lower()
+
+
+def test_skip_still_works_for_a_queued_ticket(isolated, cfg, fake_linear):
+    reply = handle_skip(cfg, "NIK-2")
+    assert fake_linear["moves"] == [("NIK-2", cfg.linear["backlog_state"])]
+
+
+def test_bump_reports_a_queue_outage_without_writing(isolated, cfg, fake_linear, monkeypatch):
+    """The membership check itself can fail (Linear down); that must also
+    produce no write, not a crash or a false 'it goes next'."""
+    def boom(*a, **k):
+        raise LinearError("Linear request failed")
+    monkeypatch.setattr(commands, "fetch_labelled_issues", boom)
+    reply = handle_bump(cfg, "NIK-1")
+    assert fake_linear["priority"] == []
+    assert "could not read" in reply.text.lower()
+
+
+def test_unskip_is_not_subject_to_the_queue_check(isolated, cfg, fake_linear):
+    """A parked ticket lives in Backlog and is by definition absent from the
+    unstarted queue -- unskip must still work for it."""
+    reply = handle_unskip(cfg, "NIK-999")
+    assert fake_linear["moves"] == [("NIK-999", cfg.linear["todo_state"])]
+    assert "not in the queue" not in reply.text.lower()
 
 
 def test_unskip_returns_it_to_todo(isolated, cfg, fake_linear):

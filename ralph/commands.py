@@ -94,19 +94,61 @@ def _api_key() -> str:
     return os.environ.get("LINEAR_API_KEY", "")
 
 
-def handle_list(cfg: Config) -> Reply:
-    """Show the queue in the order the gate will work it."""
+def _fetch_ranked_queue(cfg: Config) -> tuple[list[dict], list[str], Reply | None]:
+    """Fetch and rank the queue, exactly the way `handle_list` does.
+
+    Shared by `handle_list`, `handle_bump`, and `handle_skip` so all three agree
+    on what "in the queue" means. Returns (ranked, skipped, None) on success, or
+    ([], [], Reply) if the fetch or a malformed node blew up. A malformed Linear
+    node raises ValueError or KeyError (bad priority, missing id/identifier),
+    not LinearError, so both must be caught or the caller gets no reply at all.
+    """
     try:
         issues = fetch_labelled_issues(
             _api_key(), cfg.linear["team_key"], cfg.linear["eligible_label"])
-    except LinearError as exc:
-        return Reply(f":warning: could not read the queue: {exc}")
+        ranked, skipped = rank_issues(
+            issues,
+            eligible_label=cfg.linear["eligible_label"],
+            repo_label=cfg.linear.get("repo_label", ""))
+    except (LinearError, ValueError, KeyError) as exc:
+        return [], [], Reply(f":warning: could not read the queue: {exc}")
+    return ranked, skipped, None
 
-    ranked, skipped = rank_issues(
-        issues,
-        eligible_label=cfg.linear["eligible_label"],
-        repo_label=cfg.linear.get("repo_label", ""))
+
+def handle_list(cfg: Config) -> Reply:
+    """Show the queue in the order the gate will work it."""
+    ranked, skipped, err = _fetch_ranked_queue(cfg)
+    if err:
+        return err
     return Reply(queue_headline(ranked), blocks=build_queue_blocks(ranked, skipped))
+
+
+def _require_queued(cfg: Config, ticket: str) -> Reply | None:
+    """Confirm `ticket` is in the ranked, unstarted queue before a write.
+
+    Returns None when it is safe to proceed, or a Reply refusing the action
+    when it is not. No write happens in the refusal path.
+
+    An in-flight ticket is In Progress, which is not one of ELIGIBLE_STATE_TYPES,
+    so it is absent from `ranked` exactly like a Done or nonexistent ticket --
+    this is what stops `/ralph skip` from "parking" a ticket the 1am run is
+    already holding open, only to have `finalize.py` unconditionally move it to
+    In Review when the run ends and silently undo the human's skip. The reply
+    points at `/ralph stop` because that is the actual way to halt work already
+    in progress; skip/bump only affect what the gate has not started yet.
+    """
+    ranked, _skipped, err = _fetch_ranked_queue(cfg)
+    if err:
+        return err
+    if any(issue["identifier"] == ticket for issue in ranked):
+        return None
+    identifiers = ", ".join(issue["identifier"] for issue in ranked)
+    in_queue = f"In the queue: {identifiers}." if identifiers else "The queue is empty."
+    return Reply(
+        f":warning: {ticket} is not in the queue -- nothing changed. "
+        f"{in_queue} If {ticket} is already being worked, `/ralph stop` halts "
+        f"the run instead.",
+        ephemeral=False)
 
 
 def handle_bump(cfg: Config, ticket: str) -> Reply:
@@ -114,6 +156,9 @@ def handle_bump(cfg: Config, ticket: str) -> Reply:
     ticket = normalize_ticket(ticket, team_key=cfg.linear["team_key"])
     if not ticket:
         return Reply("Usage: `/ralph bump NIK-123`")
+    refusal = _require_queued(cfg, ticket)
+    if refusal:
+        return refusal
     try:
         set_priority(_api_key(), ticket, URGENT)
     except LinearError as exc:
@@ -125,11 +170,21 @@ def handle_bump(cfg: Config, ticket: str) -> Reply:
 
 
 def _move(cfg: Config, ticket: str, state_key: str, default: str,
-          icon: str, verb: str, usage: str) -> Reply:
-    """Shared body for skip and unskip: both are one move_issue call."""
+          icon: str, verb: str, usage: str, *, require_queued: bool = False) -> Reply:
+    """Shared body for skip and unskip: both are one move_issue call.
+
+    `require_queued` gates the pre-write queue-membership check. Only skip uses
+    it: a parked ticket lives in Backlog, which is by definition absent from the
+    unstarted queue, so applying the same check to unskip would make unskip
+    permanently impossible.
+    """
     ticket = normalize_ticket(ticket, team_key=cfg.linear["team_key"])
     if not ticket:
         return Reply(usage)
+    if require_queued:
+        refusal = _require_queued(cfg, ticket)
+        if refusal:
+            return refusal
     state = cfg.linear.get(state_key, default)
     try:
         landed = move_issue(_api_key(), ticket, state, cfg.linear["team_key"])
@@ -141,7 +196,8 @@ def _move(cfg: Config, ticket: str, state_key: str, default: str,
 def handle_skip(cfg: Config, ticket: str) -> Reply:
     """Park a ticket: Backlog is not an eligible state, so the gate ignores it."""
     return _move(cfg, ticket, "backlog_state", "Backlog",
-                 ":double_vertical_bar:", "skip", "Usage: `/ralph skip NIK-123`")
+                 ":double_vertical_bar:", "skip", "Usage: `/ralph skip NIK-123`",
+                 require_queued=True)
 
 
 def handle_unskip(cfg: Config, ticket: str) -> Reply:

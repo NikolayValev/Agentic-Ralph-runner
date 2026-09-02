@@ -55,6 +55,13 @@ deploys to production.
    `backlog`, so a labelled ticket sitting in Backlog is treated as *parked*, and
    only moves into scope when you drag it to Todo. This is deliberate: the label
    alone cannot put a ticket in front of the agent.
+7. **Selection is priority-first, not literal oldest-first.** Among unstarted,
+   labelled tickets, `rank_issues` (`ralph/linear.py`) orders by Linear priority
+   first (Urgent, then High, then Medium, then Low, then None last), then
+   oldest-`createdAt`-first within a priority tier, with the ticket identifier
+   as the final tiebreak. `/ralph list` and the gate share this ranking, and
+   `/ralph bump` works by setting a ticket's priority to Urgent so it sorts to
+   the front of its tier.
 
 ## Outstanding prerequisites (human)
 
@@ -91,7 +98,7 @@ config.yaml        policy: windows, run cap, model, allowed tools, breaker
 preflight.py       Phase 0 AC + pre-run guard; dispatch calls it every tick
 ralph/config.py    config loading + hard constraints (billing, scout, model, cap)
 ralph/contracts.py the three §7 JSON contracts: Task, PreFilter, AgentReport
-tests/             173 tests: guardrails, contracts, gate, finalize, prompt, scripts
+tests/             232 tests: guardrails, contracts, gate, finalize, prompt, scripts
 state/             STOP file, per-day run counters (gitignored)
 ```
 
@@ -99,7 +106,7 @@ state/             STOP file, per-day run counters (gitignored)
 
 ```bash
 python preflight.py                       # exit 0 = safe to run unattended
-python -m pytest tests/ -q                # 173 tests
+python -m pytest tests/ -q                # 232 tests
 ./dispatch.sh                             # one tick (no-op outside the window)
 python runs.py show|bump|stop|go          # counter + kill switch
 python gate.py --ignore-schedule --explain --issues-file fixture.json

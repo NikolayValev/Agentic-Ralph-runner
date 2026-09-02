@@ -155,7 +155,10 @@ def build_queue_blocks(ranked: list[dict], skipped: list[str]) -> list[dict]:
             {"type": "mrkdwn", "text": f"_...and {hidden} more_"}]})
 
     if skipped:
-        shown = "  |  ".join(skipped[:5])
+        # Skip reasons embed ticket titles and Linear state names (see
+        # rank_issues), which carry the same mrkdwn injection risk as the
+        # titles rendered above -- so they get the same escaping.
+        shown = "  |  ".join(escape_mrkdwn(reason) for reason in skipped[:5])
         blocks.append({"type": "context", "elements": [
             {"type": "mrkdwn", "text": f"_not queued: {shown}_"[:3000]}]})
 

@@ -76,3 +76,14 @@ def test_title_with_mrkdwn_special_chars_is_escaped():
     # Verify the ticket link is NOT escaped (still has the unescaped URL and identifier)
     assert "NIK-1" in section_text
     assert "https://linear.app/nikolayvalev/issue/NIK-1" in section_text
+
+
+def test_skip_reason_with_mrkdwn_special_chars_is_escaped():
+    """Skip reasons embed ticket titles and Linear state names (rank_issues),
+    so they carry the same injection risk as the titles above."""
+    reason = "NIK-9: state '<Weird> & Broken' is not queued"
+    blocks = build_queue_blocks([issue("NIK-1")], [reason])
+    context_text = blocks[-1]["elements"][0]["text"]
+    assert "&lt;Weird&gt;" in context_text
+    assert "&amp;" in context_text
+    assert "<Weird>" not in context_text
