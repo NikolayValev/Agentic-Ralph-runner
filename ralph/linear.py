@@ -242,6 +242,37 @@ def move_issue(
     return result["issue"]["state"]["name"]
 
 
+_PRIORITY_MUTATION = """
+mutation SetPriority($id: String!, $priority: Int!) {
+  issueUpdate(id: $id, input: { priority: $priority }) {
+    success
+    issue { identifier priority }
+  }
+}
+"""
+
+
+def set_priority(
+    api_key: str, issue_key: str, priority: int, *, endpoint: str = ENDPOINT
+) -> int:
+    """Set a ticket's Linear priority. Returns the priority Linear confirms.
+
+    Validated before the request rather than relying on Linear to reject it: an
+    out-of-range value is a bug in our caller, and a rejected mutation would
+    surface as an opaque GraphQL error in an unattended run.
+    """
+    if priority not in VALID_PRIORITIES:
+        raise LinearError(
+            f"priority must be one of {VALID_PRIORITIES} "
+            f"(0=None, 1=Urgent, 4=Low), got {priority!r}")
+    data = _post(api_key, _PRIORITY_MUTATION,
+                 {"id": issue_key, "priority": priority}, endpoint)
+    result = data["issueUpdate"]
+    if not result.get("success"):
+        raise LinearError(f"Linear refused to set priority on {issue_key}")
+    return int(result["issue"]["priority"])
+
+
 _ISSUE_LABELS_QUERY = """
 query IssueLabels($id: String!) {
   issue(id: $id) { id labels { nodes { id name } } }
