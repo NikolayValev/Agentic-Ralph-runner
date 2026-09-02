@@ -98,6 +98,14 @@ def build_message(report: AgentReport, *, channel: str) -> dict:
     }
 
 
+def escape_mrkdwn(text: str) -> str:
+    """Escape Slack mrkdwn special characters: & < >.
+
+    Must escape & first to avoid double-escaping ampersands introduced by < and >.
+    """
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def queue_headline(ranked: list[dict]) -> str:
     """One-line summary, also used as the notification fallback text."""
     if not ranked:
@@ -122,10 +130,11 @@ def build_queue_blocks(ranked: list[dict], skipped: list[str]) -> list[dict]:
         marker = ":arrow_forward:" if position == 1 else f"{position}."
         priority = PRIORITY_LABEL.get(int(issue.get("priority") or 0), "None")
         title = (issue.get("title") or "")[:80]
+        escaped_title = escape_mrkdwn(title)
         blocks.append({
             "type": "section",
             "text": {"type": "mrkdwn",
-                     "text": f"{marker}  <{linear_url(ticket)}|{ticket}>  {title}  _{priority}_"},
+                     "text": f"{marker}  <{linear_url(ticket)}|{ticket}>  {escaped_title}  _{priority}_"},
         })
         blocks.append({
             "type": "actions",

@@ -62,3 +62,17 @@ def test_an_empty_queue_still_produces_a_valid_payload():
     blocks = build_queue_blocks([], [])
     assert blocks and blocks[0]["type"] == "section"
     assert blocks_of_type(blocks, "actions") == []
+
+
+def test_title_with_mrkdwn_special_chars_is_escaped():
+    """Ticket titles containing <, >, & must be escaped so they don't break the row."""
+    title_with_specials = "Fix <Suspense> & error"
+    blocks = build_queue_blocks([issue("NIK-1", title=title_with_specials)], [])
+    # Find the section block with the title (index 1, after header)
+    section_text = blocks[1]["text"]["text"]
+    # Verify the title is escaped in the output
+    assert "&lt;Suspense&gt;" in section_text
+    assert "&amp;" in section_text
+    # Verify the ticket link is NOT escaped (still has the unescaped URL and identifier)
+    assert "NIK-1" in section_text
+    assert "https://linear.app/nikolayvalev/issue/NIK-1" in section_text
