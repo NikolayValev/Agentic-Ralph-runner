@@ -1,0 +1,4 @@
+PyYAML>=6.0
+requests>=2.32
+slack-sdk>=3.27      # Phases 4-5 (not yet installed on this machine)
+pytest>=8.0          # test suite

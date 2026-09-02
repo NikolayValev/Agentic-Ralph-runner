@@ -1,0 +1,16 @@
+# core.autocrlf is true on this machine. Without these rules git would hand
+# CRLF back to the working tree on checkout, and a shell script with a CRLF
+# shebang fails under Git Bash with "bad interpreter: No such file or
+# directory" -- which would kill the unattended tick with a very confusing
+# error. Line endings are pinned here rather than left to a global setting.
+
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.py   text eol=lf
+*.yaml text eol=lf
+*.md   text eol=lf
+
+# PowerShell is the exception: it is Windows-only tooling and conventionally
+# CRLF, and nothing executes it through a shebang.
+*.ps1  text eol=crlf

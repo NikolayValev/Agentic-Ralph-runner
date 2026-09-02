@@ -1,0 +1,12 @@
+.env
+state/*
+!state/.gitkeep
+# Run artifacts: prompts embed full ticket text, agent output embeds repo
+# contents. Not secrets, but not for the repo either.
+logs/*
+!logs/.gitkeep
+artifacts/*
+!artifacts/.gitkeep
+__pycache__/
+*.pyc
+.pytest_cache/

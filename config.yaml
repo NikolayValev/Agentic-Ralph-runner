@@ -1,0 +1,109 @@
+# Ralph MVP — policy configuration.
+# Every guardrail here is FREQUENCY-based. There are no dollar budgets:
+# the loop runs on the Claude Pro subscription, not metered API billing.
+
+repo:
+  # Human-readable name; must match the directory the isolated checkout is made from.
+  name: quitting-smoking-tracker
+  remote: https://github.com/NikolayValev/quitting-smoking-tracker.git
+  default_branch: main
+  branch_prefix: ralph/            # -> ralph/NIK-123
+  package_manager: pnpm
+
+linear:
+  team_key: NIK
+  eligible_label: autonomous-eligible
+  # Only tickets ALSO carrying this label are in scope for this repo.
+  repo_label: repo:quitting-smoking-tracker
+  todo_state: Todo                 # "unstarted" — what gate.py picks up
+  in_progress_state: In Progress
+  review_state: In Review
+
+schedule:
+  # Local (Windows) time, 24h, inclusive-exclusive. Off-peak to draw on weekly
+  # headroom rather than competing with Nikolay's daytime 5-hour window.
+  windows:
+    - "01:00-06:00"
+    - "12:00-13:00"
+  max_runs_per_day: 6              # hard stop on Tier-2 (Claude) runs per calendar day
+
+loop:
+  model: sonnet                    # Opus on Pro needs metered credits — keep off.
+  tagged_first: true
+  # NOTE: Claude Code 2.1.248 has NO --max-turns flag. This value is advisory only:
+  # it is injected into the prompt as a budget statement. The ENFORCED bound is
+  # timeout_seconds below, applied to the process by iterate.sh.
+  max_turns: 40
+  timeout_seconds: 1800            # hard kill; this is the real "one increment" bound
+  fallback_model: ""               # leave empty; do not silently escalate to Opus
+
+local:
+  enabled: true                    # Phase 6 verified 2026-09-02
+  endpoint: http://localhost:11434
+  model: gpt-oss:20b
+  num_ctx: 16384                   # MUST be set explicitly; Ollama's default (~2-4K) silently truncates
+  min_confidence: 0.6
+
+scout:
+  enabled: false                   # OFF for MVP. Do not enable without a plan revision.
+  allow: []
+  block: []
+
+deploy:
+  provider: vercel
+  protection: standard             # preview deployments must require auth
+  vercel_project_id: prj_MOxNFgcot9Z3OFRgwBeuaIL2Itux
+  vercel_org_id: team_cdPyQNoQWU4a7VqcxHcotDLm
+  # How long finalize waits for the push-triggered preview build to go READY.
+  preview_wait_seconds: 180
+
+notify:
+  provider: slack
+
+safety:
+  # VERIFIED EMPIRICALLY 2026-09-01, and it is not the obvious setting:
+  #   --permission-mode acceptEdits -> --allowedTools is DECORATIVE. A bash write
+  #     outside the allowlist succeeded. This violates sec.4 "scoped tools only".
+  #   --permission-mode manual      -> the same write was BLOCKED, while tools
+  #     named in --allowedTools still worked.
+  # So the loop runs in `manual` with an explicit allowlist. Do not "fix" a
+  # blocked tool by switching mode; add the specific tool here instead.
+  permission_mode: manual
+
+  allowed_tools:
+    - Read
+    - Edit
+    - Write
+    - Glob
+    - Grep
+    - "Bash(git status:*)"
+    - "Bash(git diff:*)"
+    - "Bash(git add:*)"
+    - "Bash(git commit:*)"
+    - "Bash(git log:*)"
+    - "Bash(pnpm install:*)"
+    - "Bash(pnpm lint:*)"
+    - "Bash(pnpm exec vitest run:*)"
+    - "Bash(pnpm build:*)"
+
+  # The agent must never touch these. `.claude/settings.local.json` is COMMITTED
+  # in this repo and grants "Bash(pnpm exec *)" -- near-arbitrary execution. If
+  # the agent could edit it, it could widen its own permissions in its own branch.
+  # Enforced after the run, before anything is pushed.
+  forbidden_paths:
+    - .claude/
+
+  # Phase 7. After this many consecutive unproductive (error / no-commit)
+  # runs the loop writes STOP and waits for a human. A loop that fails the
+  # same way every tick burns scarce subscription turns for nothing.
+  circuit_breaker_threshold: 3
+  log_retention_days: 14
+
+# Commands the agent is permitted to run in the checkout (Phase 2 --allowedTools).
+# NOTE: "pnpm test" alone runs vitest in WATCH mode and will hang a headless run.
+# Always use the run-mode form.
+commands:
+  install: pnpm install --frozen-lockfile
+  lint: pnpm lint
+  test: pnpm exec vitest run
+  build: pnpm build
