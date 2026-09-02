@@ -13,3 +13,6 @@ __pycache__/
 
 # Subagent-driven-development scratch: ledgers, briefs, review packages.
 .superpowers/
+
+# Isolated worktrees for plan execution.
+.worktrees/
