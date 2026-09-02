@@ -33,6 +33,7 @@ query EligibleIssues($teamKey: String!, $label: String!, $first: Int!) {
       id
       identifier
       title
+      priority
       createdAt
       state { name type }
       labels { nodes { name } }
@@ -52,6 +53,7 @@ def _normalize(node: dict) -> dict:
         "id": node["id"],
         "identifier": node["identifier"],
         "title": node.get("title") or "",
+        "priority": int(node.get("priority") or 0),
         "created_at": node["createdAt"],
         "state_name": (node.get("state") or {}).get("name", ""),
         "state_type": (node.get("state") or {}).get("type", ""),
@@ -119,13 +121,28 @@ def is_eligible(issue: dict, *, eligible_label: str, repo_label: str) -> tuple[b
     return True, "eligible"
 
 
-def select_ticket(
-    issues: Iterable[dict], *, eligible_label: str, repo_label: str
-) -> tuple[dict | None, list[str]]:
-    """Pick the oldest eligible ticket.
+# Linear encodes priority as 0=None, 1=Urgent, 2=High, 3=Medium, 4=Low. Sorting
+# on the raw value would rank UNPRIORITIZED tickets above Urgent ones, so 0 is
+# remapped below Low rather than compared numerically.
+NO_PRIORITY = 0
+URGENT = 1
+NO_PRIORITY_RANK = 5
+VALID_PRIORITIES = (0, 1, 2, 3, 4)
 
-    Returns (ticket_or_None, skip_reasons). Ties on created_at fall back to the
-    identifier so the choice is deterministic across runs.
+
+def priority_rank(issue: dict) -> int:
+    """Sort position for a ticket's priority: lower is worked sooner."""
+    priority = int(issue.get("priority") or NO_PRIORITY)
+    return NO_PRIORITY_RANK if priority == NO_PRIORITY else priority
+
+
+def rank_issues(
+    issues: Iterable[dict], *, eligible_label: str, repo_label: str
+) -> tuple[list[dict], list[str]]:
+    """Every eligible ticket in the order the gate will work them.
+
+    Returns (ranked, skip_reasons). Priority first, then oldest-first, then the
+    identifier -- so the ordering is total and stable across runs.
     """
     eligible: list[dict] = []
     skipped: list[str] = []
@@ -137,10 +154,23 @@ def select_ticket(
             eligible.append(issue)
         else:
             skipped.append(f"{issue.get('identifier', '?')}: {reason}")
-    if not eligible:
-        return None, skipped
-    eligible.sort(key=lambda i: (i.get("created_at") or "", i.get("identifier") or ""))
-    return eligible[0], skipped
+    eligible.sort(key=lambda i: (
+        priority_rank(i), i.get("created_at") or "", i.get("identifier") or ""))
+    return eligible, skipped
+
+
+def select_ticket(
+    issues: Iterable[dict], *, eligible_label: str, repo_label: str
+) -> tuple[dict | None, list[str]]:
+    """Pick the ticket the next tick should work.
+
+    Thin wrapper over rank_issues so the gate and `/ralph list` can never
+    disagree about what comes next.
+    """
+    ranked, skipped = rank_issues(
+        issues, eligible_label=eligible_label, repo_label=repo_label
+    )
+    return (ranked[0] if ranked else None), skipped
 
 
 # --- writes (Phase 2) -------------------------------------------------------
