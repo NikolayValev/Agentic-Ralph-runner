@@ -590,7 +590,6 @@ Append to `tests/test_commands.py`:
 ```python
 # --- queue listing and prioritization ---------------------------------------
 
-import ralph.linear as linear_mod
 from ralph.commands import (handle_bump, handle_list, handle_skip,
                             handle_unskip, normalize_ticket)
 from ralph.linear import URGENT, LinearError
@@ -830,12 +829,12 @@ HELP = (
 - [ ] **Step 8: Run the tests**
 
 Run: `python -m pytest tests/test_commands.py -q`
-Expected: PASS — existing cases plus 14 new.
+Expected: PASS — existing cases plus 15 new.
 
 - [ ] **Step 9: Run the whole suite**
 
 Run: `python -m pytest -q`
-Expected: PASS — 211 passed.
+Expected: PASS — 212 passed.
 
 - [ ] **Step 10: Verify against real Linear, read-only**
 
@@ -961,7 +960,7 @@ Expected: PASS — 3 new cases green.
 - [ ] **Step 6: Run the whole suite**
 
 Run: `python -m pytest -q`
-Expected: PASS — 214 passed.
+Expected: PASS — 215 passed.
 
 - [ ] **Step 7: Document the commands**
 
