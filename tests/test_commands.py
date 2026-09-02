@@ -190,6 +190,18 @@ def test_normalize_ticket(raw, expected):
     assert normalize_ticket(raw) == expected
 
 
+def test_normalize_ticket_accepts_matching_team():
+    assert normalize_ticket("NIK-110", team_key="NIK") == "NIK-110"
+
+
+def test_normalize_ticket_accepts_matching_team_case_insensitively():
+    assert normalize_ticket("nik-110", team_key="NIK") == "NIK-110"
+
+
+def test_normalize_ticket_rejects_a_foreign_team():
+    assert normalize_ticket("ENG-99", team_key="NIK") == ""
+
+
 def test_list_ranks_urgent_first_and_attaches_blocks(isolated, cfg, fake_linear):
     reply = handle_list(cfg)
     assert "NIK-2" in reply.text, "the urgent ticket is the next pick"
@@ -213,6 +225,25 @@ def test_bump_sets_urgent(isolated, cfg, fake_linear):
 def test_bump_rejects_a_malformed_ticket_without_writing(isolated, cfg, fake_linear):
     reply = handle_bump(cfg, "not-a-ticket")
     assert fake_linear["priority"] == []
+    assert "usage" in reply.text.lower()
+
+
+def test_bump_rejects_a_foreign_team_ticket_without_writing(isolated, cfg, fake_linear):
+    """ENG-99 has the right shape but the wrong team; must not reach Linear."""
+    reply = handle_bump(cfg, "ENG-99")
+    assert fake_linear["priority"] == []
+    assert "usage" in reply.text.lower()
+
+
+def test_skip_rejects_a_foreign_team_ticket_without_writing(isolated, cfg, fake_linear):
+    reply = handle_skip(cfg, "ENG-99")
+    assert fake_linear["moves"] == []
+    assert "usage" in reply.text.lower()
+
+
+def test_unskip_rejects_a_foreign_team_ticket_without_writing(isolated, cfg, fake_linear):
+    reply = handle_unskip(cfg, "ENG-99")
+    assert fake_linear["moves"] == []
     assert "usage" in reply.text.lower()
 
 

@@ -67,14 +67,27 @@ def status_text(cfg: Config, *, now: datetime | None = None) -> str:
 TICKET_RE = re.compile(r"^[A-Za-z]+-\d+$")
 
 
-def normalize_ticket(raw: str) -> str:
+def normalize_ticket(raw: str, *, team_key: str = "") -> str:
     """Uppercase a ticket id, or return '' if it is not one.
 
     Slack helpfully wraps bare text in angle brackets when it thinks it is a
-    link, so those are stripped before matching.
+    link, so those are stripped before matching. When Slack renders a link as
+    `<url|label>`, splitting on '|' keeps the URL half, not the label -- that
+    is deliberate: the URL will not match TICKET_RE, so the input fails closed
+    into the usage message rather than risking a match on the wrong text.
+
+    When `team_key` is given, the ticket's prefix must equal it
+    (case-insensitively). LINEAR_API_KEY is workspace-wide and neither
+    `set_priority` nor `move_issue` scopes its write to a team, so this is the
+    only thing standing between a typo like `ENG-99` and a real mutation on a
+    ticket that has nothing to do with this team's queue.
     """
     candidate = (raw or "").strip().strip("<>").split("|")[0].strip().upper()
-    return candidate if TICKET_RE.match(candidate) else ""
+    if not TICKET_RE.match(candidate):
+        return ""
+    if team_key and not candidate.startswith(f"{team_key.upper()}-"):
+        return ""
+    return candidate
 
 
 def _api_key() -> str:
@@ -98,7 +111,7 @@ def handle_list(cfg: Config) -> Reply:
 
 def handle_bump(cfg: Config, ticket: str) -> Reply:
     """Make a ticket the next pick by setting it Urgent in Linear."""
-    ticket = normalize_ticket(ticket)
+    ticket = normalize_ticket(ticket, team_key=cfg.linear["team_key"])
     if not ticket:
         return Reply("Usage: `/ralph bump NIK-123`")
     try:
@@ -114,7 +127,7 @@ def handle_bump(cfg: Config, ticket: str) -> Reply:
 def _move(cfg: Config, ticket: str, state_key: str, default: str,
           icon: str, verb: str, usage: str) -> Reply:
     """Shared body for skip and unskip: both are one move_issue call."""
-    ticket = normalize_ticket(ticket)
+    ticket = normalize_ticket(ticket, team_key=cfg.linear["team_key"])
     if not ticket:
         return Reply(usage)
     state = cfg.linear.get(state_key, default)
