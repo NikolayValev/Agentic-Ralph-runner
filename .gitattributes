@@ -1,8 +1,11 @@
-# core.autocrlf is true on this machine. Without these rules git would hand
-# CRLF back to the working tree on checkout, and a shell script with a CRLF
-# shebang fails under Git Bash with "bad interpreter: No such file or
-# directory" -- which would kill the unattended tick with a very confusing
-# error. Line endings are pinned here rather than left to a global setting.
+# core.autocrlf is true on this machine, so line endings are pinned here rather
+# than left to a global setting that a future clone may not share.
+#
+# Git Bash's loader does tolerate a CRLF shebang -- dispatch.sh has run for
+# weeks with one -- so this is not load-bearing for the tick. It matters for
+# the quieter CRLF failures: a trailing \r inside a quoted string or heredoc
+# becomes part of the value, which is how a path or a token silently acquires
+# an invisible character.
 
 * text=auto eol=lf
 
