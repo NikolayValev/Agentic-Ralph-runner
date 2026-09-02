@@ -10,3 +10,6 @@ artifacts/*
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Subagent-driven-development scratch: ledgers, briefs, review packages.
+.superpowers/
