@@ -21,6 +21,14 @@ STATUS_STYLE = {
 
 ACTION_APPROVE = "ralph_approve"
 ACTION_DISCARD = "ralph_discard"
+ACTION_BUMP = "ralph_bump"
+ACTION_SKIP = "ralph_skip"
+
+# Slack caps a message at 50 blocks and each row costs two. Ten rows is plenty
+# to choose from and leaves headroom for the header and context lines.
+QUEUE_ROW_LIMIT = 10
+
+PRIORITY_LABEL = {0: "None", 1: "Urgent", 2: "High", 3: "Medium", 4: "Low"}
 
 
 def should_notify(report: AgentReport) -> bool:
@@ -88,3 +96,58 @@ def build_message(report: AgentReport, *, channel: str) -> dict:
         "unfurl_links": False,
         "unfurl_media": False,
     }
+
+
+def queue_headline(ranked: list[dict]) -> str:
+    """One-line summary, also used as the notification fallback text."""
+    if not ranked:
+        return ":white_circle: Ralph queue - nothing eligible"
+    return (f":clipboard: Ralph queue - {len(ranked)} eligible, "
+            f"next is {ranked[0]['identifier']}")
+
+
+def build_queue_blocks(ranked: list[dict], skipped: list[str]) -> list[dict]:
+    """Block Kit for `/ralph list`: the pick order, with per-row controls.
+
+    Takes plain issue dicts rather than importing from ralph.linear, so message
+    construction stays independent of how the queue was produced.
+    """
+    blocks: list[dict] = [
+        {"type": "section",
+         "text": {"type": "mrkdwn", "text": f"*{queue_headline(ranked)}*"}},
+    ]
+
+    for position, issue in enumerate(ranked[:QUEUE_ROW_LIMIT], start=1):
+        ticket = issue["identifier"]
+        marker = ":arrow_forward:" if position == 1 else f"{position}."
+        priority = PRIORITY_LABEL.get(int(issue.get("priority") or 0), "None")
+        title = (issue.get("title") or "")[:80]
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn",
+                     "text": f"{marker}  <{linear_url(ticket)}|{ticket}>  {title}  _{priority}_"},
+        })
+        blocks.append({
+            "type": "actions",
+            "block_id": f"ralph_queue::{ticket}",
+            "elements": [
+                # Neither button is styled `danger`: bump and skip are both
+                # reversible, unlike Discard on a run report.
+                {"type": "button", "action_id": ACTION_BUMP,
+                 "text": {"type": "plain_text", "text": "Bump"}, "value": ticket},
+                {"type": "button", "action_id": ACTION_SKIP,
+                 "text": {"type": "plain_text", "text": "Skip"}, "value": ticket},
+            ],
+        })
+
+    hidden = len(ranked) - QUEUE_ROW_LIMIT
+    if hidden > 0:
+        blocks.append({"type": "context", "elements": [
+            {"type": "mrkdwn", "text": f"_...and {hidden} more_"}]})
+
+    if skipped:
+        shown = "  |  ".join(skipped[:5])
+        blocks.append({"type": "context", "elements": [
+            {"type": "mrkdwn", "text": f"_not queued: {shown}_"[:3000]}]})
+
+    return blocks
