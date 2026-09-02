@@ -105,6 +105,24 @@ python runs.py show|bump|stop|go          # counter + kill switch
 python gate.py --ignore-schedule --explain --issues-file fixture.json
 ```
 
+### Slack commands
+
+```
+*Ralph commands*
+`/ralph status`          - schedule window, run budget, failure streak, STOP state
+`/ralph list`            - the queue, in the order Ralph will work it
+`/ralph bump NIK-123`    - make a ticket the next pick (sets Urgent in Linear)
+`/ralph skip NIK-123`    - park a ticket in Backlog; Ralph ignores it
+`/ralph unskip NIK-123`  - return a parked ticket to Todo
+`/ralph stop`            - pause the loop (writes STOP; ticks become no-ops)
+`/ralph go`              - resume (clears STOP and the failure streak)
+`/ralph help`            - this message
+```
+
+`bump` sets Linear priority to Urgent; `skip` moves the ticket to Backlog,
+which the gate does not treat as queued. Both are visible in Linear, and both
+are reversible from Slack.
+
 ### Gate exit codes
 
 `0` work found (Task JSON on stdout) · `10` nothing eligible · `11` outside the

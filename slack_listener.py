@@ -11,10 +11,11 @@ import argparse
 import os
 import sys
 
-from ralph.commands import (HELP, Reply, handle_approve, handle_discard,
-                            handle_slash, status_text)
+from ralph.commands import (HELP, Reply, handle_approve, handle_bump,
+                            handle_discard, handle_skip, handle_slash,
+                            status_text)
 from ralph.config import ConfigError, configure_stdio, load
-from ralph.slack import ACTION_APPROVE, ACTION_DISCARD
+from ralph.slack import ACTION_APPROVE, ACTION_BUMP, ACTION_DISCARD, ACTION_SKIP
 
 
 def dispatch_action(cfg, action_id: str, ticket: str) -> Reply:
@@ -22,6 +23,10 @@ def dispatch_action(cfg, action_id: str, ticket: str) -> Reply:
         return handle_approve(cfg, ticket)
     if action_id == ACTION_DISCARD:
         return handle_discard(cfg, ticket)
+    if action_id == ACTION_BUMP:
+        return handle_bump(cfg, ticket)
+    if action_id == ACTION_SKIP:
+        return handle_skip(cfg, ticket)
     return Reply(f"Unknown action `{action_id}`.")
 
 
@@ -32,6 +37,21 @@ def ticket_from_payload(payload: dict) -> str:
         return actions[0]["value"]
     block_id = (actions[0].get("block_id") if actions else "") or ""
     return block_id.split("::")[-1] if "::" in block_id else ""
+
+
+def _post_reply(web, channel: str, reply, user: str = "") -> None:
+    """One place that knows how to turn a Reply into a Slack call.
+
+    The previous inline ternary could not carry blocks, and an ephemeral reply
+    needs a different method entirely.
+    """
+    payload = {"channel": channel, "text": reply.text}
+    if reply.blocks:
+        payload["blocks"] = reply.blocks
+    if reply.ephemeral and user:
+        web.chat_postEphemeral(user=user, **payload)
+    else:
+        web.chat_postMessage(**payload)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,10 +95,8 @@ def main(argv: list[str] | None = None) -> int:
             if request.type == "slash_commands":
                 payload = request.payload
                 reply = handle_slash(payload.get("text", ""), cfg)
-                web.chat_postMessage(
-                    channel=payload["channel_id"], text=reply.text
-                ) if not reply.ephemeral else web.chat_postEphemeral(
-                    channel=payload["channel_id"], user=payload["user_id"], text=reply.text)
+                _post_reply(web, payload["channel_id"], reply,
+                            payload.get("user_id", ""))
 
             elif request.type == "interactive":
                 payload = request.payload
@@ -89,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
                                         ticket_from_payload(payload))
                 channel = (payload.get("channel") or {}).get("id")
                 if channel:
-                    web.chat_postMessage(channel=channel, text=reply.text)
+                    _post_reply(web, channel, reply)
         except Exception as exc:                      # a listener crash kills the loop
             print(f"listener: error handling {request.type}: {exc}", file=sys.stderr)
 

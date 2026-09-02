@@ -267,3 +267,19 @@ def test_help_documents_the_new_commands(isolated, cfg):
     text = handle_slash("help", cfg).text
     for command in ("list", "bump", "skip", "unskip"):
         assert command in text
+
+
+def test_dispatch_routes_bump(isolated, cfg, fake_linear):
+    dispatch_action(cfg, ACTION_BUMP, "NIK-1")
+    assert fake_linear["priority"] == [("NIK-1", URGENT)]
+
+
+def test_dispatch_routes_skip(isolated, cfg, fake_linear):
+    dispatch_action(cfg, ACTION_SKIP, "NIK-1")
+    assert fake_linear["moves"] == [("NIK-1", cfg.linear["backlog_state"])]
+
+
+def test_dispatch_still_rejects_an_unknown_action(isolated, cfg, fake_linear):
+    reply = dispatch_action(cfg, "ralph_nonsense", "NIK-1")
+    assert "unknown" in reply.text.lower()
+    assert fake_linear["priority"] == [] and fake_linear["moves"] == []
