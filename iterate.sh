@@ -155,8 +155,16 @@ PY
 # that line. Captured to a file rather than piped straight through so FINAL_RC is
 # finalize's own exit code and not the pipeline's.
 REPORT_FILE="$LOG_DIR/report-$RUN_ID.json"
+# errexit OFF across this pipeline, deliberately. finalize exits non-zero on
+# outcomes that still print a report and still deserve a Slack message -- a
+# forbidden-path rejection, and "the branch pushed but the PR could not be
+# opened". Under `set -e` the script would die on this line: FINAL_RC would
+# never be read, notify would never run, and the failures most worth hearing
+# about would be the silent ones.
+set +e
 "$PYTHON" finalize.py --ticket "$TICKET" --output "$(to_win "$AGENT_OUT")" "${CONFIG_ARGS[@]}" ${RALPH_DRY_RUN:+--dry-run} | tee "$REPORT_FILE"
 FINAL_RC=${PIPESTATUS[0]}
+set -e
 
 # --- tell the human ---------------------------------------------------------
 # Never fatal: a Slack outage must not turn a completed run into a failed tick,

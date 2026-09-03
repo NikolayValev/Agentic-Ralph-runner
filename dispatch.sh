@@ -151,7 +151,15 @@ fi
 # crashes still consumes its slot and cannot be retried in a tight loop.
 if [[ -x "$HERE/iterate.sh" ]]; then
   "$PYTHON" runs.py bump "${CONFIG_ARGS[@]}" >>"$LOG_FILE" 2>&1 || { log "run cap hit at bump; aborting"; exit 0; }
+  # Same reasoning as iterate.sh: a non-zero iterate is a reportable outcome,
+  # not a reason to abandon the tick before it logs that it finished.
+  set +e
   echo "$TASK_JSON" | "$HERE/iterate.sh"
+  ITERATE_RC=${PIPESTATUS[1]}
+  set -e
+  if [[ $ITERATE_RC -ne 0 ]]; then
+    log "iterate exited rc=$ITERATE_RC (see the run log)"
+  fi
 else
   log "iterate.sh not present; stopping after the gate"
 fi
