@@ -19,3 +19,6 @@ __pycache__/
 
 # Run reports handed to notify.py.
 logs/report-*.json
+
+# Local window-override config for on-demand test runs.
+config.anytime.yaml
