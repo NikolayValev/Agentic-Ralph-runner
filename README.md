@@ -11,14 +11,15 @@ deploys to production.
 |---|---|
 | 0 — Skeleton & contracts | **done, verified** |
 | 1 — Gate + schedule guardrails | **done, verified live** |
-| 2 — Iteration on the subscription | **built; verified live except the push/PR path** (needs `GITHUB_TOKEN`) |
+| 2 — Iteration on the subscription | **done, verified live** — PR #3 opened on quitting-smoking-tracker 2026-09-02 |
 | 3 — Protected staging | **done, verified live** (API lookup + protection) |
-| 4 — Slack outbound | **built; payload verified.** Send untested (needs `SLACK_BOT_TOKEN`) |
-| 5 — Slack inbound | **built; commands verified live.** Socket Mode untested (needs `SLACK_APP_TOKEN`) |
+| 4 — Slack outbound | **send verified live** 2026-09-02. Wired into the tick 2026-09-03 — that path has not yet run live |
+| 5 — Slack inbound | **Socket Mode connects**; handlers covered by tests. Listener not installed as a task — see TODO.md |
 | 6 — Local triage tier | **done, verified live** with `gpt-oss:20b` |
 | 7 — Circuit breaker | **done, verified live** |
 
-**Do not install the schedule until phases 1–5 pass by hand.**
+The schedule is installed (`Ralph tick`, hourly 01-05 and 12). **The loop is
+currently STOPPED** — see TODO.md.
 
 ## Verified on this machine (2026-09-01)
 
@@ -65,16 +66,18 @@ deploys to production.
 
 ## Outstanding prerequisites (human)
 
+Only one is left; it lives in [TODO.md](TODO.md).
+
 - [x] ~~Create the `autonomous-eligible` label in Linear~~ — created 2026-09-01.
 - [x] ~~`LINEAR_API_KEY`~~ — added; live gate, state lookup and 401 handling all verified.
-- [ ] `GITHUB_TOKEN` — the only thing blocking PR creation. `git push` needs nothing
+- [x] ~~`GITHUB_TOKEN`~~ — added 2026-09-02; PR #3 opened. Note: `git push` needs nothing
       (it uses the machine's credential helper), but the REST call to open the PR does.
-- [ ] `LINEAR_API_KEY`, `GITHUB_TOKEN`, `VERCEL_TOKEN` in `.env`.
-- [ ] `ollama pull gpt-oss:20b` (Phase 6).
-- [ ] Slack app: bot scopes `chat:write`,`commands`; Socket Mode token; `/ralph`.
-- [ ] Vercel Deployment Protection enabled for Preview.
-- [ ] `pip install -r requirements.txt` (`slack-sdk` is not yet installed).
-- [ ] Disable PC sleep, or the schedule will not fire.
+- [x] ~~`LINEAR_API_KEY`, `GITHUB_TOKEN`, `VERCEL_TOKEN` in `.env`~~ — all five present; preflight clean.
+- [x] ~~`ollama pull gpt-oss:20b`~~ — installed and serving.
+- [x] ~~Slack app~~ — scopes `chat:write`, `chat:write.public`, `commands`; both tokens verified.
+- [x] ~~Vercel Deployment Protection~~ — confirmed: preview redirects to sso-api.
+- [x] ~~`pip install -r requirements.txt`~~ — slack_sdk 3.44.0 installed.
+- [x] ~~Disable PC sleep~~ — standby idle is 0 (never) on both AC and DC.
 
 ## Layout
 
