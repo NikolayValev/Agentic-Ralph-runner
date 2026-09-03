@@ -79,3 +79,38 @@ def test_legitimate_ci_edit_is_allowed():
 
 def test_windows_separators_are_normalised():
     assert forbidden_hits([".claude\settings.local.json"], [".claude/"])
+
+
+# --- Vercel ids come from the environment, not the tracked config -----------
+
+def test_deploy_id_prefers_the_environment(monkeypatch):
+    """config.yaml is public; .env is not. The env must win."""
+    from finalize import deploy_id
+    from ralph.config import load
+
+    cfg = load(check_env=False)
+    monkeypatch.setenv("VERCEL_PROJECT_ID", "prj_from_env")
+    assert deploy_id(cfg, "VERCEL_PROJECT_ID", "vercel_project_id") == "prj_from_env"
+
+
+def test_deploy_id_falls_back_to_config(monkeypatch):
+    """A private deployment of this repo may still keep the ids in config."""
+    from finalize import deploy_id
+    from ralph.config import load
+
+    cfg = load(check_env=False)
+    cfg.raw["deploy"]["vercel_project_id"] = "prj_from_config"
+    monkeypatch.delenv("VERCEL_PROJECT_ID", raising=False)
+    assert deploy_id(cfg, "VERCEL_PROJECT_ID", "vercel_project_id") == "prj_from_config"
+
+
+def test_tracked_config_carries_no_account_identifiers():
+    """Regression guard for the public repo: these belong in .env only."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    for name in ("config.yaml", ".env.example"):
+        text = (root / name).read_text(encoding="utf-8")
+        found = re.findall(r"\b(?:prj_|team_)(?!xxx)[A-Za-z0-9]{8,}", text)
+        assert not found, f"{name} carries a real Vercel identifier: {found}"

@@ -53,8 +53,10 @@ scout:
 deploy:
   provider: vercel
   protection: standard             # preview deployments must require auth
-  vercel_project_id: prj_MOxNFgcot9Z3OFRgwBeuaIL2Itux
-  vercel_org_id: team_cdPyQNoQWU4a7VqcxHcotDLm
+  # Read from VERCEL_PROJECT_ID / VERCEL_ORG_ID in .env. Left empty because
+  # this repo is public and these identify the account's infrastructure.
+  vercel_project_id: ""
+  vercel_org_id: ""
   # How long finalize waits for the push-triggered preview build to go READY.
   preview_wait_seconds: 180
 

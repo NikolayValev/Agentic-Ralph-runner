@@ -72,6 +72,17 @@ def note_outcome(cfg, status: str) -> None:
         print("finalize: STOP written; the loop is now paused", file=sys.stderr)
 
 
+def deploy_id(cfg, env_name: str, config_key: str) -> str:
+    """Vercel ids: environment first, config.yaml as fallback.
+
+    These identify a project, they are not credentials -- acting on them still
+    needs VERCEL_TOKEN. But they are account infrastructure and this repo is
+    public, so .env is their home and config.yaml keeps the key documented and
+    empty. preflight already requires VERCEL_PROJECT_ID in the environment.
+    """
+    return os.environ.get(env_name, "") or cfg.deploy.get(config_key, "")
+
+
 def resolve_preview(cfg, branch: str) -> tuple[str, str]:
     """(preview_url, note). Never returns a URL that is reachable anonymously.
 
@@ -87,8 +98,8 @@ def resolve_preview(cfg, branch: str) -> tuple[str, str]:
     try:
         preview = find_preview(
             token,
-            cfg.deploy.get("vercel_project_id", ""),
-            cfg.deploy.get("vercel_org_id", ""),
+            deploy_id(cfg, "VERCEL_PROJECT_ID", "vercel_project_id"),
+            deploy_id(cfg, "VERCEL_ORG_ID", "vercel_org_id"),
             branch,
             wait_seconds=int(cfg.deploy.get("preview_wait_seconds", 180)),
         )
