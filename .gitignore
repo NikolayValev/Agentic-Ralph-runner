@@ -16,3 +16,6 @@ __pycache__/
 
 # Isolated worktrees for plan execution.
 .worktrees/
+
+# Run reports handed to notify.py.
+logs/report-*.json

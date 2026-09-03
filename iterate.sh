@@ -151,7 +151,23 @@ for line in raw.splitlines():
 PY
 
 # --- verify, push, PR, transition ------------------------------------------
-"$PYTHON" finalize.py --ticket "$TICKET" --output "$(to_win "$AGENT_OUT")" "${CONFIG_ARGS[@]}" ${RALPH_DRY_RUN:+--dry-run}
-FINAL_RC=$?
+# finalize prints the Agent Report JSON as its last stdout line; notify.py reads
+# that line. Captured to a file rather than piped straight through so FINAL_RC is
+# finalize's own exit code and not the pipeline's.
+REPORT_FILE="$LOG_DIR/report-$RUN_ID.json"
+"$PYTHON" finalize.py --ticket "$TICKET" --output "$(to_win "$AGENT_OUT")" "${CONFIG_ARGS[@]}" ${RALPH_DRY_RUN:+--dry-run} | tee "$REPORT_FILE"
+FINAL_RC=${PIPESTATUS[0]}
+
+# --- tell the human ---------------------------------------------------------
+# Never fatal: a Slack outage must not turn a completed run into a failed tick,
+# and the PR exists either way. A silent-status report posts nothing by design.
+if [[ -s "$REPORT_FILE" ]]; then
+  if ! "$PYTHON" notify.py --report-file "$(to_win "$REPORT_FILE")" "${CONFIG_ARGS[@]}" >>"$RUN_LOG" 2>&1; then
+    log "iterate: notify failed (tick unaffected; see $RUN_LOG)"
+  fi
+else
+  log "iterate: no report produced; nothing to notify"
+fi
+
 log "iterate: done (finalize rc=$FINAL_RC, log $RUN_LOG)"
 exit $FINAL_RC
