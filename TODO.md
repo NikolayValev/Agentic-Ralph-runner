@@ -27,6 +27,25 @@ Undo with `install-listener.ps1 -Remove`. Logs land in `logs/listener-<date>.log
   whose correct answer is written in the ticket, chosen so the first
   unsupervised run is easy to judge from the preview deploy.
 
+## Verified ready (2026-09-03)
+
+Checked rather than assumed, before the first real run:
+
+- Target repo baseline on `origin/main`: install ok, **40/40 tests pass**,
+  lint 0 errors. This was the README's stated hard blocker; NIK-110's fix
+  merged as `f9d1dce` cleared it.
+- `preflight.py`: 0 failures, 0 warnings.
+- Local triage on NIK-105 returns `run=true tier=claude` with a sensible
+  commit hint, so the ticket will not be silently dropped at tier 1.
+- The agent prompt for NIK-105 renders at 3509 chars with no unsubstituted
+  placeholders.
+- Workspace trust flag still `true` in `~/.claude.json`, so the agent's
+  allowlist actually applies instead of being ignored.
+- `dispatch.sh` rehearsed end to end under STOP: no-op, lock released, no run
+  consumed.
+- Ollama serving `gpt-oss:20b`; Slack both tokens valid; Vercel preview
+  protected; sleep disabled.
+
 ## Still unproven (needs one real run)
 
 - A full tick end to end on the current code: gate → agent → finalize → PR →

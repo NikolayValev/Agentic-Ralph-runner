@@ -207,22 +207,38 @@ The fix is preserved at `artifacts/NIK-110-logger-mock-fix.patch`, because
 `workspace.py` hard-resets the branch on the next run and would destroy it.
 Nothing was pushed - there is still no `GITHUB_TOKEN`.
 
-## STOP: the target repo's test suite is already red
+## RESOLVED: the target repo's baseline is green
 
-`pnpm exec vitest run` on **pristine `origin/main`** fails: 4 tests in
-`__tests__/lib/observability/logger.test.ts` (`TypeError: c.capture is not a
-function`), plus the component-test failures tracked in NIK-110.
+This section used to read "STOP: the target repo's test suite is already red",
+and it was the single biggest blocker: `pnpm exec vitest run` on pristine
+`origin/main` failed 4 tests in `__tests__/lib/observability/logger.test.ts`
+(`TypeError: c.capture is not a function`), plus the component failures tracked
+in NIK-110. Until that was fixed, essentially every run would correctly come
+back `blocked` - the pipeline working exactly as designed, on a repo it could
+not succeed in.
 
-This matters more than any remaining feature. The agent is instructed never to
-report success on a red suite, and `finalize.py` refuses to publish a run that
-did not commit. So **until the suite is green, essentially every run will
-correctly come back `blocked`** - the pipeline working exactly as designed, on a
-repo it cannot succeed in.
+The loop fixed it itself. The agent's 2026-09-02 run diagnosed the cause
+(`vi.restoreAllMocks()` in `afterEach` also resets a plain
+`vi.fn().mockImplementation()`, so the PostHog constructor mock stopped
+returning its object after the first test) and the fix landed as PR #3,
+merged to `main` as `f9d1dce`.
 
-The agent has now fixed exactly this (above), but the fix is unpushed, so the
-baseline is still red. Land it before enabling the schedule. Do not "fix"
-this by relaxing the test gate: a loop that opens PRs against a red baseline
-produces reviewable-looking work with no signal behind it.
+Re-verified against `origin/main` on 2026-09-03, in the isolated checkout,
+with the exact commands from `config.yaml`:
+
+```
+pnpm install --frozen-lockfile   ->  ok
+pnpm exec vitest run             ->  7 files, 40 tests, all passing
+pnpm lint                        ->  0 errors, 12 warnings
+```
+
+The 12 warnings are the `react-hooks/purity` and `set-state-in-effect`
+violations deliberately downgraded from error in NIK-106 and tracked in
+NIK-108. They do not fail the gate.
+
+The original warning still stands as policy: do not "fix" a red baseline by
+relaxing the test gate. A loop that opens PRs against a red baseline produces
+reviewable-looking work with no signal behind it.
 
 ## Phase 6: gpt-oss is a reasoning model, and that breaks the obvious call
 
