@@ -20,7 +20,7 @@ Undo with `install-listener.ps1 -Remove`. Logs land in `logs/listener-<date>.log
 ## Postponed
 
 - **The loop is STOPPED.** `state/STOP` was written on 2026-09-03 to hold the
-  first real run. Resume with `python runs.py stop` → `python runs.py go`, or
+  first real run. Resume with `python runs.py go`, or
   `/ralph go` once the listener is up.
 - **NIK-105 is queued and waiting** — labelled `autonomous-eligible`, moved to
   Todo. `gate.py` selects it. It is a two-line fix to `app/privacy/page.tsx`
@@ -52,7 +52,7 @@ Checked rather than assumed, before the first real run:
   **notify**. The notify call was only wired in on 2026-09-03; its plumbing is
   unit-tested and was verified in isolation, but no live tick has exercised it.
 - The Slack buttons and slash commands against real Slack. Socket Mode connects
-  (`is_connected() == True`) and the handlers are covered by 232 tests, but
+  (`is_connected() == True`) and the handlers are covered by tests, but
   nobody has pressed Bump in a real channel.
 
 ## Follow-ups (not blocking)
