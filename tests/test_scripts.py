@@ -183,3 +183,18 @@ def test_iterate_notifies_after_finalize():
     assert text.index("finalize.py --ticket") < text.index("notify.py --report-file"), (
         "notify consumes finalize's report, so it must run after it"
     )
+
+
+def test_shell_scripts_are_lf_only():
+    """A CRLF .sh breaks under any bash that is not msys2's.
+
+    Git Bash tolerates a CRLF shebang; WSL's bash does not, and no bash
+    tolerates `set -euo pipefail\r` -- it reports "invalid option name".
+    Editing these files with a tool that translates newlines on Windows
+    (Python's text-mode write does) silently reintroduces this.
+    """
+    for name in ROOT.glob("*.sh"):
+        raw = name.read_bytes()
+        assert b"\x0d\x0a" not in raw, (
+            f"{name.name} has CRLF line endings; rewrite it in binary mode"
+        )
