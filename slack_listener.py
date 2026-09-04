@@ -12,10 +12,13 @@ import os
 import sys
 
 from ralph.commands import (HELP, Reply, handle_approve, handle_bump,
-                            handle_discard, handle_skip, handle_slash,
-                            status_text)
+                            handle_cancel, handle_confirm, handle_discard,
+                            handle_list, handle_skip, handle_slash, status_text)
+from ralph.conversation import interpret, needs_confirmation
 from ralph.config import ConfigError, configure_stdio, load
-from ralph.slack import ACTION_APPROVE, ACTION_BUMP, ACTION_DISCARD, ACTION_SKIP
+from ralph.slack import (ACTION_APPROVE, ACTION_BUMP, ACTION_CANCEL,
+                         ACTION_CONFIRM, ACTION_DISCARD, ACTION_SKIP,
+                         build_confirm_blocks)
 
 
 def dispatch_action(cfg, action_id: str, ticket: str) -> Reply:
@@ -27,7 +30,54 @@ def dispatch_action(cfg, action_id: str, ticket: str) -> Reply:
         return handle_bump(cfg, ticket)
     if action_id == ACTION_SKIP:
         return handle_skip(cfg, ticket)
+    # For these two the button value is "<action>::<ticket>", not a bare
+    # ticket; the handlers parse it themselves.
+    if action_id == ACTION_CONFIRM:
+        return handle_confirm(cfg, ticket)
+    if action_id == ACTION_CANCEL:
+        return handle_cancel(cfg, ticket)
     return Reply(f"Unknown action `{action_id}`.")
+
+
+def is_human_dm(event: dict) -> bool:
+    """A real person typing in a DM -- and nothing else.
+
+    The bot's own posts arrive as events too, and answering one is an infinite
+    loop that will rate-limit the workspace. `message_changed` re-delivers old
+    text, which would run the same action a second time.
+    """
+    if event.get("type") != "message":
+        return False
+    if event.get("channel_type") != "im":
+        return False
+    if event.get("bot_id") or event.get("subtype"):
+        return False
+    return bool(event.get("user") and event.get("text"))
+
+
+def handle_dm(cfg, text: str) -> Reply:
+    """Interpret a sentence: propose what writes, perform what is safe.
+
+    Which actions need a click is decided by ralph.conversation, not here --
+    it exports needs_confirmation precisely so this routing cannot disagree
+    with the module that made the judgement.
+    """
+    intent, question = interpret(cfg, text)
+    if intent is None:
+        return Reply(question, ephemeral=False)
+
+    if needs_confirmation(intent.action):
+        named = f" {intent.ticket}" if intent.ticket else ""
+        return Reply(f"Confirm {intent.action}{named}?", ephemeral=False,
+                     blocks=build_confirm_blocks(intent.action, intent.ticket, text))
+
+    if intent.action == "list":
+        return handle_list(cfg)
+    if intent.action == "status":
+        return Reply(status_text(cfg), ephemeral=False)
+    # Only `stop` reaches here, and deliberately: it halts an autonomous
+    # system, so nothing stands between the human and the brake.
+    return handle_slash(intent.action, cfg)
 
 
 def ticket_from_payload(payload: dict) -> str:
@@ -108,6 +158,17 @@ def main(argv: list[str] | None = None) -> int:
                 channel = (payload.get("channel") or {}).get("id")
                 if channel:
                     _post_reply(web, channel, reply)
+
+            elif request.type == "events_api":
+                if not cfg.conversation.get("enabled", True):
+                    return
+                event = request.payload.get("event") or {}
+                # Both guards, in this order: the switch, then the check that
+                # this is a human rather than the bot's own message.
+                if not is_human_dm(event):
+                    return
+                reply = handle_dm(cfg, event.get("text", ""))
+                _post_reply(web, event["channel"], reply)
         except Exception as exc:                      # a listener crash kills the loop
             print(f"listener: error handling {request.type}: {exc}", file=sys.stderr)
 

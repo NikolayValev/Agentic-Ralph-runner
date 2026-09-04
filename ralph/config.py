@@ -28,7 +28,7 @@ _WINDOW_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$"
 
 REQUIRED_SECTIONS = (
     "repo", "linear", "schedule", "loop", "local", "scout",
-    "deploy", "notify", "commands", "safety",
+    "deploy", "notify", "commands", "safety", "conversation",
 )
 
 # Modes that make --allowedTools decorative. Verified empirically: under
@@ -110,6 +110,9 @@ class Config:
     def loop(self) -> dict: return self.raw["loop"]
     @property
     def local(self) -> dict: return self.raw["local"]
+
+    @property
+    def conversation(self) -> dict: return self.raw["conversation"]
     @property
     def deploy(self) -> dict: return self.raw["deploy"]
     @property

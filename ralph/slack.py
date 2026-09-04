@@ -184,8 +184,11 @@ def build_confirm_blocks(action: str, ticket: str, sentence: str) -> list[dict]:
         {"type": "section",
          "text": {"type": "mrkdwn",
                   "text": f"You said: _{escape_mrkdwn(sentence[:200])}_\n"
-                          f"I read that as *{action}* "
-                          f"<{linear_url(ticket)}|{ticket}>."}},
+                          f"I read that as *{action}*"
+                          # `go` is confirmable but names no ticket. Rendering
+                          # linear_url("") would put a dead link to issue/ in
+                          # front of the human.
+                          + (f" <{linear_url(ticket)}|{ticket}>." if ticket else ".")}},
         {"type": "actions",
          "block_id": f"ralph_confirm::{ticket}",
          "elements": [

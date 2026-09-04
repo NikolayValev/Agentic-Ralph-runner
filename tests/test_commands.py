@@ -404,3 +404,139 @@ def test_an_unknown_action_in_a_confirm_writes_nothing(isolated, cfg, fake_linea
     reply = handle_confirm(cfg, "deploy::NIK-1")
     assert fake_linear["priority"] == [] and fake_linear["moves"] == []
     assert "could not" in reply.text.lower()
+
+
+# --- confirming an action that has no ticket (go) ----------------------------
+
+def test_confirm_blocks_for_a_ticketless_action_have_no_ticket_link():
+    """`go` needs a click but names no ticket. Rendering linear_url("") would
+    put a dead link to issue/ in front of the human."""
+    blocks = build_confirm_blocks("go", "", "start it back up")
+    rendered = json.dumps(blocks)
+    assert "issue/|" not in rendered and "issue/>" not in rendered
+
+
+def test_confirm_blocks_for_a_ticketless_action_still_carry_the_value():
+    blocks = build_confirm_blocks("go", "", "start it back up")
+    actions = [b for b in blocks if b["type"] == "actions"][0]
+    assert actions["elements"][0]["value"] == "go::"
+
+
+def test_confirming_go_resumes_the_loop(isolated, cfg, fake_linear):
+    """The whole point of confirming `go`: it re-arms an autonomous system,
+    so the click must actually clear STOP."""
+    handle_slash("stop", cfg)
+    assert isolated.exists()
+    handle_confirm(cfg, "go::")
+    assert not isolated.exists()
+    assert fake_linear["priority"] == [] and fake_linear["moves"] == []
+
+
+def test_confirming_go_needs_no_ticket(isolated, cfg, fake_linear):
+    reply = handle_confirm(cfg, "go::")
+    assert "could not" not in reply.text.lower()
+
+
+def test_stop_is_still_not_confirmable(isolated, cfg, fake_linear):
+    """stop is deliberately immediate; it must not arrive through this path."""
+    reply = handle_confirm(cfg, "stop::")
+    assert "could not" in reply.text.lower()
+
+
+# --- DM routing --------------------------------------------------------------
+
+from slack_listener import handle_dm, is_human_dm
+
+
+def test_a_bot_message_is_never_treated_as_a_dm():
+    """The bot's own posts arrive as events too. Replying to them is an
+    infinite loop that will rate-limit the workspace."""
+    assert is_human_dm({"type": "message", "channel_type": "im",
+                        "bot_id": "B123", "text": "hi"}) is False
+
+
+def test_a_message_edit_is_ignored():
+    """message_changed re-delivers old text and would re-run the action."""
+    assert is_human_dm({"type": "message", "channel_type": "im",
+                        "subtype": "message_changed", "text": "hi"}) is False
+
+
+def test_a_channel_message_is_not_a_dm():
+    assert is_human_dm({"type": "message", "channel_type": "channel",
+                        "user": "U1", "text": "hi"}) is False
+
+
+def test_a_non_message_event_is_ignored():
+    assert is_human_dm({"type": "reaction_added", "channel_type": "im",
+                        "user": "U1"}) is False
+
+
+def test_a_plain_human_dm_is_accepted():
+    assert is_human_dm({"type": "message", "channel_type": "im",
+                        "user": "U1", "text": "status"}) is True
+
+
+def test_a_dm_proposing_a_linear_write_asks_first(isolated, cfg, monkeypatch):
+    import slack_listener
+    from ralph.ollama import Intent
+    monkeypatch.setattr(slack_listener, "interpret",
+                        lambda c, m: (Intent("bump", "NIK-1", 0.9), ""))
+    reply = handle_dm(cfg, "do the first one next")
+    assert reply.blocks, "a write must be proposed, never performed"
+
+
+def test_a_dm_proposing_go_asks_first(isolated, cfg, monkeypatch):
+    """go re-arms the loop, so it is confirmed even though it writes no ticket."""
+    import slack_listener
+    from ralph.ollama import Intent
+    monkeypatch.setattr(slack_listener, "interpret",
+                        lambda c, m: (Intent("go", "", 0.9), ""))
+    reply = handle_dm(cfg, "start it back up")
+    assert reply.blocks
+
+
+def test_a_dm_asking_to_stop_acts_immediately(isolated, cfg, monkeypatch):
+    """stop is the kill switch: no second click between you and the brake."""
+    import slack_listener
+    from ralph.ollama import Intent
+    monkeypatch.setattr(slack_listener, "interpret",
+                        lambda c, m: (Intent("stop", "", 0.95), ""))
+    reply = handle_dm(cfg, "stop for tonight")
+    assert not reply.blocks and isolated.exists()
+
+
+def test_a_dm_asking_for_status_answers_immediately(isolated, cfg, monkeypatch):
+    import slack_listener
+    from ralph.ollama import Intent
+    monkeypatch.setattr(slack_listener, "interpret",
+                        lambda c, m: (Intent("status", "", 0.95), ""))
+    reply = handle_dm(cfg, "what are you doing")
+    assert "Ralph" in reply.text and not reply.blocks
+
+
+def test_a_dm_the_model_could_not_read_returns_the_question(isolated, cfg, monkeypatch):
+    import slack_listener
+    monkeypatch.setattr(slack_listener, "interpret",
+                        lambda c, m: (None, "I did not follow that."))
+    reply = handle_dm(cfg, "asdf")
+    assert "did not follow" in reply.text and not reply.blocks
+
+
+def test_conversation_can_be_switched_off_in_config():
+    """A kill switch for the whole DM surface, independent of slash commands."""
+    from ralph.config import load
+    assert load(check_env=False).conversation.get("enabled") is True
+
+
+def test_the_listener_gates_dms_on_both_the_switch_and_the_bot_check():
+    """Static check: an events_api branch that forgets either guard is how the
+    bot ends up answering itself or answering while disabled."""
+    from pathlib import Path
+    source = Path(__file__).resolve().parent.parent / "slack_listener.py"
+    text = source.read_text(encoding="utf-8")
+    events_at = text.index('"events_api"')
+    tail = text[events_at:]
+    assert "conversation" in tail, "the events branch must honour conversation.enabled"
+    assert "is_human_dm" in tail, "the events branch must reject bot and edited messages"
+    assert tail.index("is_human_dm") < tail.index("handle_dm"), (
+        "the bot check must gate the handler, not follow it")

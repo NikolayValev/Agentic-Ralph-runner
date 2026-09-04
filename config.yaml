@@ -45,6 +45,11 @@ local:
   num_ctx: 16384                   # MUST be set explicitly; Ollama's default (~2-4K) silently truncates
   min_confidence: 0.6
 
+conversation:
+  # Phase 2. Off disables the DM surface entirely; slash commands and buttons
+  # are unaffected, so this is a scalpel rather than the STOP file.
+  enabled: true
+
 scout:
   enabled: false                   # OFF for MVP. Do not enable without a plan revision.
   allow: []

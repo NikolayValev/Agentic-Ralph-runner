@@ -222,9 +222,18 @@ def _split_confirm(value: str) -> tuple[str, str]:
     return action.strip().lower(), ticket.strip().upper()
 
 
+# Confirmable actions that name no ticket. Only `go` qualifies: it re-arms the
+# loop and clears the failure streak, so it needs a click, but it acts on the
+# loop rather than on any one ticket. `stop` is deliberately absent -- it is
+# immediate, and must never arrive through the confirmation path.
+CONFIRMABLE_TICKETLESS = ("go",)
+
+
 def handle_confirm(cfg: Config, value: str) -> Reply:
     """Perform a previously proposed action, after the human approved it."""
     action, ticket = _split_confirm(value)
+    if action in CONFIRMABLE_TICKETLESS:
+        return handle_slash(action, cfg)
     handler = CONFIRMABLE.get(action)
     if handler is None or not ticket:
         return Reply(f":warning: could not act on `{value}`; ask me again.",
