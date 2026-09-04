@@ -1,21 +1,37 @@
 # TODO
 
-## Blocked on you (one command)
+## Blocked on you: Slack scopes for plain-English DMs
 
-Register the Slack listener as a logon-triggered task. Claude Code's auto-mode
-classifier refuses to register a logon-persistence task, so this has to be run
-by hand:
+Tasks 1-3 of the natural-language plan need none of this. Task 4 (routing the
+DM itself) is written but cannot be verified live until this is done.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File "C:\Users\Nikolay\code\ralph\install-listener.ps1"
-Start-ScheduledTask -TaskName "Ralph listener"
+In https://api.slack.com/apps -> your Ralph app:
+
+1. **OAuth & Permissions -> Bot Token Scopes** -> add both:
+   - `im:history`  (read DM content)
+   - `im:read`     (see DM conversations)
+2. **App Home -> Show Tabs -> Messages Tab** -> enable it, and tick
+   "Allow users to send Slash commands and messages from the messages tab".
+3. **Event Subscriptions -> Subscribe to bot events** -> add `message.im`.
+   (Socket Mode is already on, so no Request URL is needed.)
+4. **Reinstall the app.** This issues a NEW `xoxb-` token.
+5. Replace `SLACK_BOT_TOKEN` in `.env` with the new token, then:
+   `Restart-ScheduledTask -TaskName "Ralph listener"`
+
+Verify from Git Bash:
+
+```bash
+set -a; source .env; set +a
+curl -s -D - -o /dev/null -X POST https://slack.com/api/auth.test   -H "Authorization: Bearer $SLACK_BOT_TOKEN" | grep -i x-oauth-scopes
 ```
 
-Until this runs, `/ralph list`, `/ralph stop` and the Bump/Skip buttons have
-nothing listening. Outbound run reports do NOT depend on it — those are posted
-by the tick itself.
+`im:history` and `im:read` must both appear. Until step 5, the old token is
+dead and the listener will fail to post -- so do 4 and 5 together.
 
-Undo with `install-listener.ps1 -Remove`. Logs land in `logs/listener-<date>.log`.
+## Done
+
+- [x] ~~Register the Slack listener as a logon task~~ - installed 2026-09-04;
+  task "Ralph listener" is Running and survives reboots.
 
 ## Postponed
 
