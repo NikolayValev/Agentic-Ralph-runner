@@ -52,6 +52,59 @@ VERDICT_SCHEMA = {
     "required": ["run", "tier", "reason", "commit_hint", "confidence"],
 }
 
+# The actions a conversation may propose. Deliberately the same verbs the
+# slash commands and buttons already perform: the NL layer is a translator,
+# never a new capability.
+ACTIONS = ("bump", "skip", "unskip", "list", "status", "stop", "go", "unknown")
+
+
+@dataclass(frozen=True)
+class Intent:
+    action: str
+    ticket: str
+    confidence: float
+
+
+INTENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "action": {"type": "string", "enum": list(ACTIONS)},
+        "ticket": {"type": "string"},
+        "confidence": {"type": "number"},
+    },
+    "required": ["action", "ticket", "confidence"],
+}
+
+
+INTENT_PROMPT = """You translate one message into a single command for a coding bot.
+
+Answer with a single JSON object and nothing else:
+{{"action": "bump"|"skip"|"unskip"|"list"|"status"|"stop"|"go"|"unknown",
+  "ticket": "<ticket id, or empty string>", "confidence": 0.0-1.0}}
+
+Meanings:
+- "bump": work this ticket next.
+- "skip": stop considering this ticket for now.
+- "unskip": put a previously skipped ticket back in the queue.
+- "list": show the queue. "status": show whether the bot is running.
+- "stop": pause the bot. "go": resume it.
+- "unknown": anything else, including questions you cannot answer with one
+  of the actions above.
+
+Rules:
+- "ticket" must be one of the ids in the queue below, copied exactly, or "".
+- The user may describe a ticket instead of naming it ("the drizzle one").
+  Match it against the titles below. If nothing matches clearly, use "unknown".
+- Set confidence below 0.6 whenever you are guessing. Guessing wrongly makes
+  the bot do the wrong work; asking is free.
+- Judge only the message and the queue below. Do not invent ticket ids.
+
+The queue right now:
+{queue}
+
+The message: {message}
+"""
+
 
 def chat(endpoint: str, model: str, prompt: str, *, num_ctx: int,
          schema: dict | None = None, timeout: int = TIMEOUT) -> str:
@@ -131,5 +184,35 @@ def parse_verdict(raw: str) -> LocalVerdict:
         run=run, tier=tier,
         reason=str(payload.get("reason", ""))[:200],
         commit_hint=str(payload.get("commit_hint", ""))[:120],
+        confidence=max(0.0, min(confidence, 1.0)),
+    )
+
+
+def parse_intent(raw: str) -> Intent:
+    """Parse the model's JSON strictly. An unrecognised action is not an error.
+
+    A model that invents an action must degrade into a clarifying question,
+    not an exception: this runs inside the listener's request handler, and a
+    crash there is a dropped message the human never learns about.
+    """
+    text = raw.strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1:
+        raise OllamaError(f"local model returned no JSON object: {text[:200]}")
+    try:
+        payload = json.loads(text[start:end + 1])
+    except json.JSONDecodeError as exc:
+        raise OllamaError(f"local model returned invalid JSON: {text[:200]}") from exc
+
+    action = payload.get("action")
+    if action not in ACTIONS:
+        action = "unknown"
+    try:
+        confidence = float(payload.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return Intent(
+        action=action,
+        ticket=str(payload.get("ticket", "")).strip().upper(),
         confidence=max(0.0, min(confidence, 1.0)),
     )
