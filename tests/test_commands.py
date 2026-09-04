@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 import pytest
@@ -351,3 +352,55 @@ def test_dispatch_still_rejects_an_unknown_action(isolated, cfg, fake_linear):
     reply = dispatch_action(cfg, "ralph_nonsense", "NIK-1")
     assert "unknown" in reply.text.lower()
     assert fake_linear["priority"] == [] and fake_linear["moves"] == []
+
+
+# --- natural-language confirmation ------------------------------------------
+
+from ralph.commands import handle_cancel, handle_confirm
+from ralph.slack import ACTION_CANCEL, ACTION_CONFIRM, build_confirm_blocks
+
+
+def test_confirm_blocks_carry_the_action_and_ticket():
+    """The button value is the only state that survives the round trip."""
+    blocks = build_confirm_blocks("bump", "NIK-115", "do the drizzle one next")
+    actions = [b for b in blocks if b["type"] == "actions"][0]
+    values = {e["action_id"]: e["value"] for e in actions["elements"]}
+    assert values[ACTION_CONFIRM] == "bump::NIK-115"
+    assert values[ACTION_CANCEL] == "bump::NIK-115"
+
+
+def test_confirm_blocks_quote_what_was_understood():
+    """The human is approving an interpretation, so it must be visible."""
+    blocks = build_confirm_blocks("skip", "NIK-111", "park the haptics one")
+    rendered = json.dumps(blocks)
+    assert "NIK-111" in rendered and "skip" in rendered.lower()
+
+
+def test_confirming_a_bump_performs_the_bump(isolated, cfg, fake_linear):
+    reply = handle_confirm(cfg, "bump::NIK-1")
+    assert fake_linear["priority"] == [("NIK-1", URGENT)]
+    assert reply.ephemeral is False
+
+
+def test_confirming_a_skip_performs_the_skip(isolated, cfg, fake_linear):
+    handle_confirm(cfg, "skip::NIK-1")
+    assert fake_linear["moves"] == [("NIK-1", cfg.linear["backlog_state"])]
+
+
+def test_cancelling_performs_nothing(isolated, cfg, fake_linear):
+    reply = handle_cancel(cfg, "bump::NIK-1")
+    assert fake_linear["priority"] == [] and fake_linear["moves"] == []
+    assert "cancel" in reply.text.lower()
+
+
+def test_a_malformed_confirm_value_writes_nothing(isolated, cfg, fake_linear):
+    """A stale or hand-crafted button payload must not reach Linear."""
+    reply = handle_confirm(cfg, "garbage")
+    assert fake_linear["priority"] == [] and fake_linear["moves"] == []
+    assert "could not" in reply.text.lower()
+
+
+def test_an_unknown_action_in_a_confirm_writes_nothing(isolated, cfg, fake_linear):
+    reply = handle_confirm(cfg, "deploy::NIK-1")
+    assert fake_linear["priority"] == [] and fake_linear["moves"] == []
+    assert "could not" in reply.text.lower()

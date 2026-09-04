@@ -207,6 +207,38 @@ def handle_unskip(cfg: Config, ticket: str) -> Reply:
                  "Usage: `/ralph unskip NIK-123`")
 
 
+# The confirmation button's value is "<action>::<ticket>". Only these actions
+# may be confirmed: a value naming anything else is a stale or hand-crafted
+# payload and must reach nothing.
+CONFIRMABLE = {
+    "bump": handle_bump,
+    "skip": handle_skip,
+    "unskip": handle_unskip,
+}
+
+
+def _split_confirm(value: str) -> tuple[str, str]:
+    action, _, ticket = (value or "").partition("::")
+    return action.strip().lower(), ticket.strip().upper()
+
+
+def handle_confirm(cfg: Config, value: str) -> Reply:
+    """Perform a previously proposed action, after the human approved it."""
+    action, ticket = _split_confirm(value)
+    handler = CONFIRMABLE.get(action)
+    if handler is None or not ticket:
+        return Reply(f":warning: could not act on `{value}`; ask me again.",
+                     ephemeral=False)
+    return handler(cfg, ticket)
+
+
+def handle_cancel(cfg: Config, value: str) -> Reply:
+    """Drop a proposal. Nothing was written, so there is nothing to undo."""
+    action, ticket = _split_confirm(value)
+    return Reply(f":x: Cancelled {action or 'that'} {ticket}; nothing changed.",
+                 ephemeral=False)
+
+
 def handle_slash(text: str, cfg: Config) -> Reply:
     parts = (text or "").strip().split()
     command = parts[0].lower() if parts else "status"

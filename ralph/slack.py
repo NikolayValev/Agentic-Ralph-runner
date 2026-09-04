@@ -24,6 +24,8 @@ ACTION_APPROVE = "ralph_approve"
 ACTION_DISCARD = "ralph_discard"
 ACTION_BUMP = "ralph_bump"
 ACTION_SKIP = "ralph_skip"
+ACTION_CONFIRM = "ralph_confirm"
+ACTION_CANCEL = "ralph_cancel"
 
 # Slack caps a message at 50 blocks and each row costs two. Ten rows is plenty
 # to choose from and leaves headroom for the header and context lines.
@@ -167,3 +169,31 @@ def build_queue_blocks(ranked: list[dict], skipped: list[str]) -> list[dict]:
             {"type": "mrkdwn", "text": f"_not queued: {shown}_"[:3000]}]})
 
     return blocks
+
+
+def build_confirm_blocks(action: str, ticket: str, sentence: str) -> list[dict]:
+    """Ask before acting on an interpretation of what someone said.
+
+    The quoted sentence matters: the human is approving a reading of their
+    words, not just an action, and a misparse is only obvious when both are
+    shown together. The button value carries the whole decision, because it
+    is the only state that survives the round trip to Slack and back.
+    """
+    value = f"{action}::{ticket}"
+    return [
+        {"type": "section",
+         "text": {"type": "mrkdwn",
+                  "text": f"You said: _{escape_mrkdwn(sentence[:200])}_\n"
+                          f"I read that as *{action}* "
+                          f"<{linear_url(ticket)}|{ticket}>."}},
+        {"type": "actions",
+         "block_id": f"ralph_confirm::{ticket}",
+         "elements": [
+             {"type": "button", "action_id": ACTION_CONFIRM,
+              "text": {"type": "plain_text", "text": "Do it"},
+              "style": "primary", "value": value},
+             {"type": "button", "action_id": ACTION_CANCEL,
+              "text": {"type": "plain_text", "text": "Cancel"},
+              "value": value},
+         ]},
+    ]
