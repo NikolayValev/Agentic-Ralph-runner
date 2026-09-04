@@ -100,3 +100,87 @@ def test_read_only_actions_need_no_ticket(cfg, queue, monkeypatch):
     _model(monkeypatch, '{"action":"status","ticket":"","confidence":0.95}')
     intent, question = conversation.interpret(cfg, "what are you doing")
     assert intent is not None and intent.action == "status"
+
+
+# --- Finding 1: unskip validates against the skipped set, not the queue ----
+
+@pytest.fixture
+def queue_with_backlog(monkeypatch):
+    """One eligible (unstarted) ticket and one parked in Backlog, so unskip
+    has something real to target and bump/skip still have a queue."""
+    issues = [
+        {"identifier": "NIK-111", "title": "Add haptics to breathing timer",
+         "priority": 0, "created_at": "2026-01-01T00:00:00Z", "state_type": "unstarted",
+         "labels": ["autonomous-eligible", "repo:quitting-smoking-tracker"], "id": "u1"},
+        {"identifier": "NIK-222", "title": "Skipped ticket", "priority": 0,
+         "created_at": "2026-01-03T00:00:00Z", "state_type": "backlog",
+         "labels": ["autonomous-eligible", "repo:quitting-smoking-tracker"], "id": "u3"},
+    ]
+    monkeypatch.setattr(conversation, "fetch_labelled_issues", lambda *a, **k: issues)
+    return issues
+
+
+def test_unskip_of_a_backlog_ticket_is_accepted(cfg, queue_with_backlog, monkeypatch):
+    """NIK-222 is not in the eligible queue (it is Backlog) -- that must not
+    refuse an unskip the way it would refuse a bump."""
+    _model(monkeypatch, '{"action":"unskip","ticket":"NIK-222","confidence":0.9}')
+    intent, question = conversation.interpret(cfg, "unskip NIK-222")
+    assert intent == Intent("unskip", "NIK-222", 0.9) and question == ""
+
+
+def test_unskip_of_an_unlisted_ticket_is_refused(cfg, queue_with_backlog, monkeypatch):
+    """Neither queued (unstarted) nor skipped (backlog) -- unskip must still refuse."""
+    _model(monkeypatch, '{"action":"unskip","ticket":"NIK-999","confidence":0.9}')
+    intent, question = conversation.interpret(cfg, "unskip NIK-999")
+    assert intent is None and "NIK-999" in question and "not skipped" in question
+
+
+def test_bump_still_validates_against_the_eligible_queue(cfg, queue_with_backlog, monkeypatch):
+    """A Backlog ticket is not eligible for bump even though it exists."""
+    _model(monkeypatch, '{"action":"bump","ticket":"NIK-222","confidence":0.9}')
+    intent, question = conversation.interpret(cfg, "bump NIK-222")
+    assert intent is None and "not in the queue" in question
+
+
+def test_skip_still_validates_against_the_eligible_queue(cfg, queue_with_backlog, monkeypatch):
+    _model(monkeypatch, '{"action":"skip","ticket":"NIK-111","confidence":0.9}')
+    intent, question = conversation.interpret(cfg, "skip NIK-111")
+    assert intent == Intent("skip", "NIK-111", 0.9) and question == ""
+
+
+# --- Findings 2 & 3: which actions need a human confirmation click ---------
+
+def test_needs_confirmation_matches_the_direction_of_safety_split():
+    from ralph.ollama import ACTIONS
+
+    expected = {
+        "bump": True, "skip": True, "unskip": True, "go": True,
+        "list": False, "status": False, "stop": False, "unknown": False,
+    }
+    assert set(expected) == set(ACTIONS)
+    for action, expect in expected.items():
+        assert conversation.needs_confirmation(action) is expect, action
+
+
+def test_needs_confirmation_set_matches_the_predicate():
+    from ralph.ollama import ACTIONS
+
+    for action in ACTIONS:
+        assert conversation.needs_confirmation(action) == (
+            action in conversation.NEEDS_CONFIRMATION)
+
+
+# --- Finding 4: a broken local.* config degrades to a message, not a crash -
+
+def test_missing_local_config_key_degrades_to_a_hint(cfg, queue, monkeypatch):
+    """A misspelled or missing local.* key must not raise KeyError up into
+    the Slack listener, which would silently drop the human's message."""
+    monkeypatch.delitem(cfg.local, "endpoint")
+    intent, question = conversation.interpret(cfg, "bump the drizzle one")
+    assert intent is None and "config is broken" in question
+
+
+def test_non_numeric_num_ctx_degrades_to_a_hint(cfg, queue, monkeypatch):
+    monkeypatch.setitem(cfg.local, "num_ctx", "not-a-number")
+    intent, question = conversation.interpret(cfg, "bump the drizzle one")
+    assert intent is None and "config is broken" in question

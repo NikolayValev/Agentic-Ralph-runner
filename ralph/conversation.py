@@ -18,7 +18,23 @@ from ralph.ollama import (INTENT_PROMPT, INTENT_SCHEMA, Intent, OllamaError,
 # Actions that read nothing from the queue and so need no ticket id.
 TICKETLESS = ("list", "status", "stop", "go")
 
+# Actions that need a human click before they execute. The line is drawn by
+# direction of safety, not by whether Linear gets written. `stop` halts an
+# autonomous system -- a misparse there costs a paused loop that one word
+# ("go") resumes, so it can act immediately. `go` re-arms the loop and clears
+# its failure streak, so a low-confidence misparse could restart work a human
+# deliberately halted -- that is fail-dangerous, so it joins the
+# ticket-writing actions (bump/skip/unskip) behind a confirmation click.
+# list/status read nothing and change nothing, so they are immediate too.
+NEEDS_CONFIRMATION = frozenset({"bump", "skip", "unskip", "go"})
+
 FALLBACK = "Try `/ralph help` for the commands I understand."
+
+
+def needs_confirmation(action: str) -> bool:
+    """True when `action` must be rendered as a confirmation with buttons
+    rather than executed straight away."""
+    return action in NEEDS_CONFIRMATION
 
 
 def format_queue(ranked: list[dict]) -> str:
@@ -47,11 +63,16 @@ def interpret(cfg: Config, message: str) -> tuple[Intent | None, str]:
     prompt = INTENT_PROMPT.format(
         queue=format_queue(ranked), message=message.strip()[:500])
     try:
-        raw = chat(local["endpoint"], local["model"], prompt,
-                   num_ctx=int(local["num_ctx"]), schema=INTENT_SCHEMA)
+        endpoint = local["endpoint"]
+        model = local["model"]
+        num_ctx = int(local["num_ctx"])
+        raw = chat(endpoint, model, prompt, num_ctx=num_ctx, schema=INTENT_SCHEMA)
         intent = parse_intent(raw)
     except OllamaError as exc:
         return None, f":warning: my local model is not answering ({exc}). {FALLBACK}"
+    except (KeyError, ValueError) as exc:
+        return None, (
+            f":warning: my local model config is broken ({exc}). {FALLBACK}")
 
     floor = float(local.get("min_confidence", 0.6))
     if intent.action == "unknown":
@@ -61,7 +82,19 @@ def interpret(cfg: Config, message: str) -> tuple[Intent | None, str]:
             f"I am not sure enough to act on that (confidence "
             f"{intent.confidence:.0%}). {FALLBACK}")
 
-    if intent.action not in TICKETLESS:
+    if intent.action == "unskip":
+        # A skipped ticket sits in Backlog, not among the eligible/unstarted
+        # queue rank_issues returns -- validate it against the labelled
+        # issues that are NOT unstarted instead of against `ranked`.
+        skipped = {
+            i["identifier"] for i in issues if i.get("state_type") != "unstarted"
+        }
+        if intent.ticket not in skipped:
+            listed = ", ".join(sorted(skipped)) or "nothing"
+            return None, (
+                f"{intent.ticket or 'That ticket'} is not skipped. "
+                f"Currently skipped: {listed}.")
+    elif intent.action not in TICKETLESS:
         queued = {i["identifier"] for i in ranked}
         if intent.ticket not in queued:
             listed = ", ".join(sorted(queued)) or "nothing"
