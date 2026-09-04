@@ -51,3 +51,15 @@ def test_no_json_at_all_raises():
 def test_malformed_json_raises():
     with pytest.raises(OllamaError, match="invalid JSON"):
         parse_intent('{"action":"bump", ticket:}')
+
+
+def test_explicit_null_ticket_becomes_empty_string():
+    """When the model explicitly returns null for ticket, treat it as missing."""
+    got = parse_intent('{"action":"bump","ticket":null,"confidence":0.9}')
+    assert got.ticket == ""
+
+
+def test_missing_ticket_key_becomes_empty_string():
+    """When the ticket key is absent, default to empty string."""
+    got = parse_intent('{"action":"bump","confidence":0.9}')
+    assert got.ticket == ""

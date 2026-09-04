@@ -211,8 +211,13 @@ def parse_intent(raw: str) -> Intent:
         confidence = float(payload.get("confidence", 0.0))
     except (TypeError, ValueError):
         confidence = 0.0
+    ticket_val = payload.get("ticket")
+    if ticket_val is None:
+        ticket = ""
+    else:
+        ticket = str(ticket_val).strip().upper()
     return Intent(
         action=action,
-        ticket=str(payload.get("ticket", "")).strip().upper(),
+        ticket=ticket,
         confidence=max(0.0, min(confidence, 1.0)),
     )
