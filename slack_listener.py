@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 
 from ralph.commands import (HELP, Reply, handle_approve, handle_bump,
@@ -55,13 +56,43 @@ def is_human_dm(event: dict) -> bool:
     return bool(event.get("user") and event.get("text"))
 
 
-def handle_dm(cfg, text: str) -> Reply:
+# Slack delivers a mention as "<@U09ABCDEF> do the drizzle one next". The token
+# is noise competing with the user's actual words in the model's prompt.
+_MENTION = re.compile(r"<@[UWB][A-Z0-9]+>")
+
+
+def strip_mentions(text: str) -> str:
+    """Remove @-mention tokens and collapse the whitespace they leave."""
+    return " ".join(_MENTION.sub(" ", text or "").split())
+
+
+def is_human_mention(event: dict) -> bool:
+    """A real person @-mentioning the bot in a channel.
+
+    The same guards as is_human_dm, and they matter more here: the bot posts
+    run reports into this channel constantly, so a message it wrote is far
+    likelier to come back at it than in a DM.
+    """
+    if event.get("type") != "app_mention":
+        return False
+    if event.get("bot_id") or event.get("subtype"):
+        return False
+    return bool(event.get("user") and event.get("text"))
+
+
+def handle_conversation(cfg, text: str) -> Reply:
     """Interpret a sentence: propose what writes, perform what is safe.
 
-    Which actions need a click is decided by ralph.conversation, not here --
-    it exports needs_confirmation precisely so this routing cannot disagree
-    with the module that made the judgement.
+    Serves both DMs and @-mentions -- the doorway differs, the reasoning does
+    not. Which actions need a click is decided by ralph.conversation, not
+    here: it exports needs_confirmation precisely so this routing cannot
+    disagree with the module that made the judgement.
     """
+    if not text.strip():
+        # A bare "@ralphai" strips to nothing. Asking the model to interpret an
+        # empty message invites it to answer with anything at all.
+        return Reply(HELP, ephemeral=False)
+
     intent, question = interpret(cfg, text)
     if intent is None:
         return Reply(question, ephemeral=False)
@@ -163,11 +194,15 @@ def main(argv: list[str] | None = None) -> int:
                 if not cfg.conversation.get("enabled", True):
                     return
                 event = request.payload.get("event") or {}
-                # Both guards, in this order: the switch, then the check that
-                # this is a human rather than the bot's own message.
-                if not is_human_dm(event):
+                # Two doorways, same guards in the same order: the switch,
+                # then the check that a human -- not the bot -- said this.
+                if is_human_dm(event):
+                    text = event.get("text", "")
+                elif is_human_mention(event):
+                    text = strip_mentions(event.get("text", ""))
+                else:
                     return
-                reply = handle_dm(cfg, event.get("text", ""))
+                reply = handle_conversation(cfg, text)
                 _post_reply(web, event["channel"], reply)
         except Exception as exc:                      # a listener crash kills the loop
             print(f"listener: error handling {request.type}: {exc}", file=sys.stderr)

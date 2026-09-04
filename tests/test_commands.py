@@ -445,7 +445,7 @@ def test_stop_is_still_not_confirmable(isolated, cfg, fake_linear):
 
 # --- DM routing --------------------------------------------------------------
 
-from slack_listener import handle_dm, is_human_dm
+from slack_listener import handle_conversation, is_human_dm
 
 
 def test_a_bot_message_is_never_treated_as_a_dm():
@@ -481,7 +481,7 @@ def test_a_dm_proposing_a_linear_write_asks_first(isolated, cfg, monkeypatch):
     from ralph.ollama import Intent
     monkeypatch.setattr(slack_listener, "interpret",
                         lambda c, m: (Intent("bump", "NIK-1", 0.9), ""))
-    reply = handle_dm(cfg, "do the first one next")
+    reply = handle_conversation(cfg, "do the first one next")
     assert reply.blocks, "a write must be proposed, never performed"
 
 
@@ -491,7 +491,7 @@ def test_a_dm_proposing_go_asks_first(isolated, cfg, monkeypatch):
     from ralph.ollama import Intent
     monkeypatch.setattr(slack_listener, "interpret",
                         lambda c, m: (Intent("go", "", 0.9), ""))
-    reply = handle_dm(cfg, "start it back up")
+    reply = handle_conversation(cfg, "start it back up")
     assert reply.blocks
 
 
@@ -501,7 +501,7 @@ def test_a_dm_asking_to_stop_acts_immediately(isolated, cfg, monkeypatch):
     from ralph.ollama import Intent
     monkeypatch.setattr(slack_listener, "interpret",
                         lambda c, m: (Intent("stop", "", 0.95), ""))
-    reply = handle_dm(cfg, "stop for tonight")
+    reply = handle_conversation(cfg, "stop for tonight")
     assert not reply.blocks and isolated.exists()
 
 
@@ -510,7 +510,7 @@ def test_a_dm_asking_for_status_answers_immediately(isolated, cfg, monkeypatch):
     from ralph.ollama import Intent
     monkeypatch.setattr(slack_listener, "interpret",
                         lambda c, m: (Intent("status", "", 0.95), ""))
-    reply = handle_dm(cfg, "what are you doing")
+    reply = handle_conversation(cfg, "what are you doing")
     assert "Ralph" in reply.text and not reply.blocks
 
 
@@ -518,7 +518,7 @@ def test_a_dm_the_model_could_not_read_returns_the_question(isolated, cfg, monke
     import slack_listener
     monkeypatch.setattr(slack_listener, "interpret",
                         lambda c, m: (None, "I did not follow that."))
-    reply = handle_dm(cfg, "asdf")
+    reply = handle_conversation(cfg, "asdf")
     assert "did not follow" in reply.text and not reply.blocks
 
 
@@ -537,6 +537,71 @@ def test_the_listener_gates_dms_on_both_the_switch_and_the_bot_check():
     events_at = text.index('"events_api"')
     tail = text[events_at:]
     assert "conversation" in tail, "the events branch must honour conversation.enabled"
-    assert "is_human_dm" in tail, "the events branch must reject bot and edited messages"
-    assert tail.index("is_human_dm") < tail.index("handle_dm"), (
-        "the bot check must gate the handler, not follow it")
+    # Both doorways must be guarded, and both guards must precede the handler.
+    for guard in ("is_human_dm", "is_human_mention"):
+        assert guard in tail, f"the events branch must apply {guard}"
+        assert tail.index(guard) < tail.index("handle_conversation("), (
+            f"{guard} must gate the handler, not follow it")
+
+
+# --- being @-mentioned in a channel ------------------------------------------
+
+from slack_listener import is_human_mention, strip_mentions
+
+
+def test_a_leading_mention_is_stripped():
+    """Slack delivers '<@U09ABC> do the drizzle one next'. The mention token is
+    noise competing with the user's actual words in the model's prompt."""
+    assert strip_mentions("<@U09ABCDEF> do the drizzle one next") == "do the drizzle one next"
+
+
+def test_a_mention_mid_sentence_is_stripped():
+    assert strip_mentions("hey <@U09ABCDEF> stop for tonight") == "hey stop for tonight"
+
+
+def test_several_mentions_are_all_stripped():
+    assert strip_mentions("<@U1> <@U2> status") == "status"
+
+
+def test_a_bare_mention_strips_to_nothing():
+    assert strip_mentions("<@U09ABCDEF>") == ""
+
+
+def test_a_bot_mention_event_is_ignored():
+    """The bot posts in this channel constantly; answering itself is a loop."""
+    assert is_human_mention({"type": "app_mention", "bot_id": "B1",
+                             "user": "U1", "text": "<@U0> status"}) is False
+
+
+def test_an_edited_mention_is_ignored():
+    assert is_human_mention({"type": "app_mention", "subtype": "message_changed",
+                             "user": "U1", "text": "<@U0> status"}) is False
+
+
+def test_a_plain_human_mention_is_accepted():
+    assert is_human_mention({"type": "app_mention", "user": "U1",
+                             "text": "<@U0> status"}) is True
+
+
+def test_a_message_event_is_not_a_mention():
+    assert is_human_mention({"type": "message", "user": "U1", "text": "hi"}) is False
+
+
+def test_a_bare_mention_gets_help_without_asking_the_model(isolated, cfg, monkeypatch):
+    """An empty sentence must never reach the model, which would be asked to
+    interpret nothing and could answer with anything."""
+    import slack_listener
+    def explode(*a, **k):
+        raise AssertionError("the model must not be consulted for an empty message")
+    monkeypatch.setattr(slack_listener, "interpret", explode)
+    reply = slack_listener.handle_conversation(cfg, "")
+    assert "ralph" in reply.text.lower()
+
+
+def test_a_mention_proposing_a_write_still_asks_first(isolated, cfg, monkeypatch):
+    import slack_listener
+    from ralph.ollama import Intent
+    monkeypatch.setattr(slack_listener, "interpret",
+                        lambda c, m: (Intent("bump", "NIK-1", 0.9), ""))
+    reply = slack_listener.handle_conversation(cfg, "do the first one next")
+    assert reply.blocks
