@@ -146,3 +146,37 @@ def test_no_report_raises():
 def test_non_report_json_is_skipped():
     out = '{"some": "other object"}\n' + json.dumps(VALID_REPORT)
     assert parse_report_from_output(out).ticket == "NIK-111"
+
+
+# --- the "running" status: a run that has started but not finished -----------
+
+def test_running_is_a_valid_report_status():
+    """A start-of-run message needs a status of its own."""
+    report = AgentReport.parse({
+        "status": "running", "mode": "tagged", "ticket": "NIK-105",
+        "branch": "ralph/NIK-105", "pr_url": "", "preview_url": "",
+        "summary": "agent running",
+    })
+    assert report.status == "running"
+
+
+def test_running_does_not_require_a_pr_url():
+    """A started run has no PR yet. Requiring one here is what broke dry-run
+    notify: the contract rejected a legitimate report and the human heard
+    nothing. `running` must be exempt while `in_review` stays strict."""
+    report = AgentReport.parse({
+        "status": "running", "mode": "tagged", "ticket": "NIK-105",
+        "branch": "ralph/NIK-105", "pr_url": "", "preview_url": "",
+        "summary": "agent running",
+    }, require_pr_url=True)
+    assert report.pr_url == ""
+
+
+def test_in_review_still_requires_a_pr_url():
+    """The exemption must not leak: a finished run still needs somewhere to review."""
+    with pytest.raises(ContractError, match="pr_url"):
+        AgentReport.parse({
+            "status": "in_review", "mode": "tagged", "ticket": "NIK-105",
+            "branch": "ralph/NIK-105", "pr_url": "", "preview_url": "",
+            "summary": "done",
+        })

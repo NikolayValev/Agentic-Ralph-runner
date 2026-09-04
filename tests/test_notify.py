@@ -140,3 +140,136 @@ def test_block_id_carries_the_ticket():
     """The listener resolves which ticket a button press refers to."""
     actions = [b for b in blocks_of(report()) if b["type"] == "actions"][0]
     assert actions["block_id"].endswith("::NIK-108")
+
+
+# --- the start-of-run message -----------------------------------------------
+
+def _running_report():
+    return AgentReport(
+        status="running", mode="tagged", ticket="NIK-105",
+        branch="ralph/NIK-105", pr_url="", preview_url="",
+        summary="agent running",
+    )
+
+
+def test_running_message_is_visually_distinct():
+    """A live run must not look like a finished one at a glance."""
+    payload = build_message(_running_report(), channel="#ralph")
+    assert ":hourglass_flowing_sand:" in payload["text"]
+    assert "NIK-105" in payload["text"]
+
+
+def test_running_message_offers_no_review_buttons():
+    """There is nothing to approve or discard until the run finishes."""
+    payload = build_message(_running_report(), channel="#ralph")
+    assert not [b for b in payload["blocks"] if b["type"] == "actions"]
+
+
+def test_running_message_does_not_claim_a_missing_preview():
+    """'no preview' is true but useless before the run has pushed anything;
+    it reads as a failure rather than as work still in progress."""
+    payload = build_message(_running_report(), channel="#ralph")
+    rendered = json.dumps(payload)
+    assert "no preview" not in rendered
+
+
+def test_a_running_report_is_not_silent():
+    """The whole point is to hear that a tick started."""
+    assert should_notify(_running_report()) is True
+
+
+# --- message handles: editing the start message into the final one ----------
+
+def test_handle_round_trips(tmp_path):
+    """chat.update needs the resolved channel ID, not '#ralph' -- storing only
+    the ts would fail at edit time."""
+    import notify
+    path = tmp_path / "handle.json"
+    notify.write_handle(str(path), "C0123ABC", "1788.0001")
+    assert notify.read_handle(str(path)) == ("C0123ABC", "1788.0001")
+
+
+def test_read_handle_returns_none_when_absent(tmp_path):
+    import notify
+    assert notify.read_handle(str(tmp_path / "missing.json")) is None
+
+
+def test_deliver_edits_the_existing_message_when_a_handle_exists(tmp_path, monkeypatch):
+    import notify
+    path = tmp_path / "handle.json"
+    notify.write_handle(str(path), "C0123ABC", "1788.0001")
+    calls = []
+    monkeypatch.setattr(notify, "update", lambda p, t, c, ts: calls.append(("update", c, ts)) or ts)
+    monkeypatch.setattr(notify, "post", lambda p, t: calls.append(("post",)) or ("C", "9"))
+
+    notify.deliver({"channel": "#ralph"}, "token", handle_path=str(path))
+    assert calls == [("update", "C0123ABC", "1788.0001")]
+
+
+def test_deliver_falls_back_to_posting_when_the_edit_fails(tmp_path, monkeypatch):
+    """A duplicate message is a far better failure than a silently missing result."""
+    import notify
+    path = tmp_path / "handle.json"
+    notify.write_handle(str(path), "C0123ABC", "1788.0001")
+    calls = []
+
+    def boom(*a, **k):
+        raise notify.NotifyError("message_not_found")
+
+    monkeypatch.setattr(notify, "update", boom)
+    monkeypatch.setattr(notify, "post", lambda p, t: calls.append("post") or ("C0123ABC", "1788.9"))
+
+    notify.deliver({"channel": "#ralph"}, "token", handle_path=str(path))
+    assert calls == ["post"]
+
+
+def test_deliver_posts_when_there_is_no_handle(tmp_path, monkeypatch):
+    import notify
+    calls = []
+    monkeypatch.setattr(notify, "post", lambda p, t: calls.append("post") or ("C", "1"))
+    monkeypatch.setattr(notify, "update", lambda *a: calls.append("update"))
+
+    notify.deliver({"channel": "#ralph"}, "token", handle_path=str(tmp_path / "none.json"))
+    assert calls == ["post"]
+
+
+def _report_file(tmp_path, status="running", pr_url=""):
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps({
+        "status": status, "mode": "tagged", "ticket": "NIK-105",
+        "branch": "ralph/NIK-105", "pr_url": pr_url, "preview_url": "",
+        "summary": "agent running",
+    }), encoding="utf-8")
+    return str(path)
+
+
+def test_main_emits_a_handle_after_posting(tmp_path, monkeypatch):
+    """Without this the start message cannot be found again to edit."""
+    import notify
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+    monkeypatch.setenv("SLACK_CHANNEL", "#ralph")
+    monkeypatch.setattr(notify, "post", lambda p, t: ("C0123ABC", "1788.0001"))
+
+    handle = tmp_path / "handle.json"
+    rc = notify.main(["--report-file", _report_file(tmp_path),
+                      "--emit-handle", str(handle)])
+    assert rc == 0
+    assert notify.read_handle(str(handle)) == ("C0123ABC", "1788.0001")
+
+
+def test_main_updates_through_the_handle(tmp_path, monkeypatch):
+    import notify
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+    monkeypatch.setenv("SLACK_CHANNEL", "#ralph")
+    handle = tmp_path / "handle.json"
+    notify.write_handle(str(handle), "C0123ABC", "1788.0001")
+
+    edited = []
+    monkeypatch.setattr(notify, "update",
+                        lambda p, t, c, ts: edited.append((c, ts)) or ts)
+    monkeypatch.setattr(notify, "post",
+                        lambda p, t: (_ for _ in ()).throw(AssertionError("should have edited")))
+
+    rc = notify.main(["--report-file", _report_file(tmp_path, "in_review", "https://x/1"),
+                      "--update-handle", str(handle)])
+    assert rc == 0 and edited == [("C0123ABC", "1788.0001")]

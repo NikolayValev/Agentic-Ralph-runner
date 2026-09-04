@@ -16,7 +16,11 @@ SUMMARY_MAX = 240
 
 TASK_MODES = ("tagged",)  # "scout" is parked for MVP (sec.3)
 PREFILTER_TIERS = ("claude", "tooling")
-REPORT_STATUSES = ("in_review", "nothing_eligible", "blocked", "error")
+# "running" is emitted before the agent starts, so a human knows a tick is
+# live rather than the night being quiet. It carries no pr_url by design --
+# the run has not produced one yet -- which is why the pr_url rule below is
+# scoped to "in_review" alone.
+REPORT_STATUSES = ("running", "in_review", "nothing_eligible", "blocked", "error")
 
 
 class ContractError(ValueError):

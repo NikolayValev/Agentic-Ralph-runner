@@ -154,7 +154,9 @@ def test_finalize_failure_still_reaches_notify():
     """
     text = script_text("iterate.sh")
     finalize_at = text.index("finalize.py --ticket")
-    notify_at = text.index("notify.py --report-file")
+    # Two notify calls exist now: the running message and the final report.
+    # Only the final one passes $REPORT_FILE, so anchor on that.
+    notify_at = text.index('--report-file "$(to_win "$REPORT_FILE")"')
 
     guard_off = text.rindex("set +e", 0, finalize_at)
     guard_on = text.index("set -e", finalize_at)
@@ -169,7 +171,7 @@ def test_finalize_failure_still_reaches_notify():
 def test_notify_cannot_fail_the_tick():
     """A Slack outage must not turn a completed run into a failed one."""
     text = script_text("iterate.sh")
-    assert "if ! " in text[text.index("notify.py --report-file") - 120:], (
+    assert "if ! " in text[text.index('--report-file "$(to_win "$REPORT_FILE")"') - 160:], (
         "notify must be invoked in a condition, not as a bare fatal command"
     )
 
@@ -180,7 +182,7 @@ def test_iterate_notifies_after_finalize():
     assert "notify.py" in text, "the tick must tell the human what it did"
     # Compare the invocations, not the first mention: the comment above the
     # finalize call names notify.py, so a naive index() search reads backwards.
-    assert text.index("finalize.py --ticket") < text.index("notify.py --report-file"), (
+    assert text.index("finalize.py --ticket") < text.index('--report-file "$(to_win "$REPORT_FILE")"'), (
         "notify consumes finalize's report, so it must run after it"
     )
 
@@ -210,6 +212,38 @@ def test_dry_run_does_not_attempt_to_notify():
     """
     text = script_text("iterate.sh")
     guard = text.index('if [[ -n "${RALPH_DRY_RUN:-}" ]]')
-    notify = text.index("notify.py --report-file")
+    notify = text.index('--report-file "$(to_win "$REPORT_FILE")"')
     assert guard < notify, "the dry-run check must come before the notify call"
     assert "not notifying" in text
+
+
+# --- progress reporting: a live run says so ---------------------------------
+
+def test_a_running_message_is_posted_before_the_agent_starts():
+    """The point is to know a tick is live while it is live, not afterwards."""
+    text = script_text("iterate.sh")
+    running_at = text.index('"status":"running"')
+    claude_at = text.index("claude -p")
+    assert running_at < claude_at, "the running message must precede the agent"
+
+
+def test_the_running_message_records_a_handle_to_edit_later():
+    text = script_text("iterate.sh")
+    assert "--emit-handle" in text, "without a handle the message cannot be edited"
+    assert "--update-handle" in text, "the final report must edit, not duplicate"
+
+
+def test_the_final_report_edits_the_running_message():
+    text = script_text("iterate.sh")
+    assert text.index("--emit-handle") < text.index("--update-handle")
+
+
+def test_a_killed_run_does_not_leave_a_stale_running_message():
+    """If the machine dies or the agent is killed, the hourglass would claim a
+    run is live forever. The trap must be armed before the agent launches, or
+    the window it is meant to cover is exactly the window it misses."""
+    text = script_text("iterate.sh")
+    trap_at = text.index("trap ")
+    claude_at = text.index("claude -p")
+    assert trap_at < claude_at, "the EXIT trap must be armed before the agent runs"
+    assert "without reporting" in text

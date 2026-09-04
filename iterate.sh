@@ -104,6 +104,36 @@ from ralph.config import load
 [print(t) for t in load().raw['safety']['allowed_tools']]")
 
 AGENT_OUT="$LOG_DIR/agent-$RUN_ID.txt"
+
+# --- tell the human a run is live -------------------------------------------
+# Posted BEFORE the agent starts, so a long run is visibly a run rather than a
+# quiet night. The final report edits this same message instead of posting a
+# second one, so one message tells the whole story of one tick.
+HANDLE_FILE="$LOG_DIR/handle-$RUN_ID.json"
+RUNNING_REPORT="$LOG_DIR/running-$RUN_ID.json"
+FINAL_SENT=0
+
+if [[ -z "${RALPH_DRY_RUN:-}" ]]; then
+  printf '{"status":"running","mode":"tagged","ticket":"%s","branch":"%s","pr_url":"","preview_url":"","summary":"agent started at %s"}
+'     "$TICKET" "$BRANCH" "$(date +%H:%M)" > "$RUNNING_REPORT"
+  if ! "$PYTHON" notify.py --report-file "$(to_win "$RUNNING_REPORT")"         --emit-handle "$(to_win "$HANDLE_FILE")" "${CONFIG_ARGS[@]}" >>"$RUN_LOG" 2>&1; then
+    log "iterate: could not post the running message (continuing)"
+  fi
+fi
+
+# If this script dies -- kill, timeout, machine shutdown -- the hourglass would
+# otherwise claim a run is live forever. Armed before the agent launches,
+# because that is precisely the window it exists to cover.
+on_exit() {
+  local rc=$?
+  if [[ $FINAL_SENT -eq 0 && -s "$HANDLE_FILE" ]]; then
+    printf '{"status":"error","mode":"tagged","ticket":"%s","branch":"%s","pr_url":"","preview_url":"","summary":"run ended without reporting (rc=%s); see %s"}
+'       "$TICKET" "$BRANCH" "$rc" "$(basename "$RUN_LOG")" > "$RUNNING_REPORT"
+    "$PYTHON" notify.py --report-file "$(to_win "$RUNNING_REPORT")"       --update-handle "$(to_win "$HANDLE_FILE")" "${CONFIG_ARGS[@]}" >>"$RUN_LOG" 2>&1 || true
+  fi
+}
+trap on_exit EXIT
+
 log "iterate: running claude (model=$MODEL, mode=$PERM_MODE, timeout=${TIMEOUT_S}s, ${#ALLOWED[@]} tools)"
 
 # Claude must run WITH THE CHECKOUT AS ITS WORKING DIRECTORY. Its sandbox is
@@ -176,9 +206,10 @@ if [[ -n "${RALPH_DRY_RUN:-}" ]]; then
   # rather than logging a failure that means nothing is wrong.
   log "iterate: dry run; not notifying (no PR to link to)"
 elif [[ -s "$REPORT_FILE" ]]; then
-  if ! "$PYTHON" notify.py --report-file "$(to_win "$REPORT_FILE")" "${CONFIG_ARGS[@]}" >>"$RUN_LOG" 2>&1; then
+  if ! "$PYTHON" notify.py --report-file "$(to_win "$REPORT_FILE")"         --update-handle "$(to_win "$HANDLE_FILE")" "${CONFIG_ARGS[@]}" >>"$RUN_LOG" 2>&1; then
     log "iterate: notify failed (tick unaffected; see $RUN_LOG)"
   fi
+  FINAL_SENT=1
 else
   log "iterate: no report produced; nothing to notify"
 fi

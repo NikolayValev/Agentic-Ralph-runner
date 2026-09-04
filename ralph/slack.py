@@ -14,6 +14,7 @@ from ralph.contracts import AgentReport
 SILENT_STATUSES = ("nothing_eligible",)
 
 STATUS_STYLE = {
+    "running":   (":hourglass_flowing_sand:", "Agent running"),
     "in_review": (":large_green_circle:", "Ready for review"),
     "blocked":   (":large_yellow_circle:", "Blocked"),
     "error":     (":red_circle:", "Error"),
@@ -56,10 +57,13 @@ def build_message(report: AgentReport, *, channel: str) -> dict:
     links = [f"<{linear_url(report.ticket)}|Linear>"]
     if report.pr_url:
         links.append(f"<{report.pr_url}|Pull request>")
-    if report.preview_url:
-        links.append(f"<{report.preview_url}|Preview>")
-    else:
-        links.append("_no preview_")
+    # A run still in flight has produced neither, and saying "no preview" of one
+    # reads as a failure rather than as work not finished yet.
+    if report.status != "running":
+        if report.preview_url:
+            links.append(f"<{report.preview_url}|Preview>")
+        else:
+            links.append("_no preview_")
     if report.branch:
         links.append(f"`{report.branch}`")
     blocks.append({"type": "context",
