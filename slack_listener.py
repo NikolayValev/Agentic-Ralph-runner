@@ -172,6 +172,12 @@ def main(argv: list[str] | None = None) -> int:
         # Acknowledge FIRST: Slack retries anything not acked within 3s, which
         # would run the command twice.
         sm_client.send_socket_mode_response(SocketModeResponse(envelope_id=request.envelope_id))
+        # Log every arrival. Without this there is no way to tell "Slack sent
+        # nothing" from "we received it and dropped it", and an unattended bot
+        # that logs nothing about what reaches it cannot be debugged at all.
+        event_type = ((request.payload or {}).get("event") or {}).get("type", "")
+        print(f"listener: <- {request.type}"
+              + (f"/{event_type}" if event_type else ""), file=sys.stderr)
         try:
             if request.type == "slash_commands":
                 payload = request.payload
