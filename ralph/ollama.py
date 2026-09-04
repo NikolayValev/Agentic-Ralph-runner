@@ -91,6 +91,15 @@ Meanings:
 - "unknown": anything else, including questions you cannot answer with one
   of the actions above.
 
+Examples of everyday phrasing:
+- "what's up", "how's it going", "anything running", "what are you doing"
+  -> "status"
+- "what's on your plate", "show me the queue", "what's next" -> "list"
+- "pause", "knock it off", "stop for tonight" -> "stop"
+- "carry on", "resume", "start it back up" -> "go"
+- "do the drizzle one next", "prioritise the haptics ticket" -> "bump"
+- "park that", "leave it for now" -> "skip"
+
 Rules:
 - "ticket" must be one of the ids in the queue below, copied exactly, or "".
 - The user may describe a ticket instead of naming it ("the drizzle one").

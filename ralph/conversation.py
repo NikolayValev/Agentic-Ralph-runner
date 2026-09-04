@@ -75,12 +75,16 @@ def interpret(cfg: Config, message: str) -> tuple[Intent | None, str]:
             f":warning: my local model config is broken ({exc}). {FALLBACK}")
 
     floor = float(local.get("min_confidence", 0.6))
+    # With an empty queue, "start working on the next one" parses as unknown --
+    # there is no next one. Replying only "I did not follow that" blames the
+    # sentence, which was fine; the queue was the problem. Say which.
+    empty = " Nothing is in the queue right now." if not ranked else ""
     if intent.action == "unknown":
-        return None, f"I did not follow that. {FALLBACK}"
+        return None, f"I did not follow that.{empty} {FALLBACK}"
     if intent.confidence < floor:
         return None, (
             f"I am not sure enough to act on that (confidence "
-            f"{intent.confidence:.0%}). {FALLBACK}")
+            f"{intent.confidence:.0%}).{empty} {FALLBACK}")
 
     if intent.action == "unskip":
         # A skipped ticket sits in Backlog, not among the eligible/unstarted

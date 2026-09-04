@@ -184,3 +184,40 @@ def test_non_numeric_num_ctx_degrades_to_a_hint(cfg, queue, monkeypatch):
     monkeypatch.setitem(cfg.local, "num_ctx", "not-a-number")
     intent, question = conversation.interpret(cfg, "bump the drizzle one")
     assert intent is None and "config is broken" in question
+
+
+# --- saying why, when the queue is empty -------------------------------------
+
+def test_an_unreadable_message_says_so_when_the_queue_has_work(cfg, queue, monkeypatch):
+    """With work queued, 'I did not follow that' is the whole truth."""
+    _model(monkeypatch, '{"action":"unknown","ticket":"","confidence":0.9}')
+    intent, question = conversation.interpret(cfg, "asdfgh")
+    assert intent is None
+    assert "queue" not in question.lower(), "no need to mention a queue that has work"
+
+
+def test_an_unreadable_message_mentions_an_empty_queue(cfg, monkeypatch):
+    """'start working on the next one' against an empty queue parses as unknown,
+    because there is no next one. Replying only 'I did not follow that'
+    misdiagnoses it: the sentence was fine, there is simply nothing to act on."""
+    monkeypatch.setattr(conversation, "fetch_labelled_issues", lambda *a, **k: [])
+    _model(monkeypatch, '{"action":"unknown","ticket":"","confidence":0.9}')
+    intent, question = conversation.interpret(cfg, "start working on the next one")
+    assert intent is None
+    assert "nothing" in question.lower() and "queue" in question.lower()
+
+
+def test_a_low_confidence_reply_also_mentions_an_empty_queue(cfg, monkeypatch):
+    monkeypatch.setattr(conversation, "fetch_labelled_issues", lambda *a, **k: [])
+    _model(monkeypatch, '{"action":"bump","ticket":"NIK-1","confidence":0.1}')
+    intent, question = conversation.interpret(cfg, "bump something")
+    assert intent is None and "nothing" in question.lower()
+
+
+def test_the_prompt_teaches_colloquial_phrasings():
+    """'what's up' reached the model as unknown because nothing in the prompt
+    connected everyday phrasing to an action."""
+    from ralph.ollama import INTENT_PROMPT
+    lowered = INTENT_PROMPT.lower()
+    assert "what's up" in lowered or "whats up" in lowered
+    assert "examples" in lowered
