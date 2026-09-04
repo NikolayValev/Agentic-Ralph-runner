@@ -169,7 +169,13 @@ set -e
 # --- tell the human ---------------------------------------------------------
 # Never fatal: a Slack outage must not turn a completed run into a failed tick,
 # and the PR exists either way. A silent-status report posts nothing by design.
-if [[ -s "$REPORT_FILE" ]]; then
+if [[ -n "${RALPH_DRY_RUN:-}" ]]; then
+  # A dry run never pushes, so its report carries an empty pr_url, and the
+  # contract rightly refuses to tell a human "ready for review" with no link
+  # to review. Calling notify here could only ever fail; skip it and say so
+  # rather than logging a failure that means nothing is wrong.
+  log "iterate: dry run; not notifying (no PR to link to)"
+elif [[ -s "$REPORT_FILE" ]]; then
   if ! "$PYTHON" notify.py --report-file "$(to_win "$REPORT_FILE")" "${CONFIG_ARGS[@]}" >>"$RUN_LOG" 2>&1; then
     log "iterate: notify failed (tick unaffected; see $RUN_LOG)"
   fi

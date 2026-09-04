@@ -198,3 +198,18 @@ def test_shell_scripts_are_lf_only():
         assert b"\x0d\x0a" not in raw, (
             f"{name.name} has CRLF line endings; rewrite it in binary mode"
         )
+
+
+def test_dry_run_does_not_attempt_to_notify():
+    """A dry run cannot produce a pr_url, so notify could only ever fail.
+
+    The contract requires an in_review report to carry a non-empty pr_url --
+    it refuses to tell a human "ready for review" with nothing to review. A
+    dry run never pushes, so calling notify logs a failure that means nothing
+    is actually wrong, which is how real failures get ignored.
+    """
+    text = script_text("iterate.sh")
+    guard = text.index('if [[ -n "${RALPH_DRY_RUN:-}" ]]')
+    notify = text.index("notify.py --report-file")
+    assert guard < notify, "the dry-run check must come before the notify call"
+    assert "not notifying" in text
